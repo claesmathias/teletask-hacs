@@ -61,16 +61,43 @@ Restart Home Assistant.
 
 Go to **Settings → Devices & Services → Add Integration → Teletask**.
 
+Setup is split into two steps:
+
+### Step 1 — Connection
+
 | Field | Description | Default |
 |---|---|---|
 | **IP Address** | IP of your Teletask central unit | — |
 | **Port** | TCP port of the central unit | `55957` |
 | **Central Unit ID** | A unique name for this unit | `my_teletask` |
-| **Config JSON** | Component definitions (see below) | `{}` |
 
-### Config JSON format
+The integration tests the TCP connection before proceeding.
 
-Use the same `config.json` format as jeletask:
+### Step 2 — Configuration file
+
+| Field | Description |
+|---|---|
+| **Path to config.json** | Path to your component config file on the HA server |
+
+Place your `config.json` somewhere inside your HA `/config/` directory, for example:
+
+```
+/config/teletask/config.json
+```
+
+Then enter that path in the setup dialog. Relative paths (e.g. `teletask/config.json`) are resolved from `/config/` automatically.
+
+> **Tip:** Use the **File Editor** or **Studio Code Server** add-on to create and edit the file directly in the HA UI.
+
+### Updating the config later
+
+Go to **Settings → Devices & Services → Teletask → Configure** to point to a new or updated config.json at any time.
+
+---
+
+## config.json format
+
+Same format as [jeletask](https://github.com/ridiekel/jeletask):
 
 ```json
 {
@@ -88,17 +115,17 @@ Use the same `config.json` format as jeletask:
       { "number": 1, "description": "Blinds" }
     ],
     "SENSOR": [
-      { "number": 3, "description": "Temperature Sensor", "type": "TEMPERATURE", "ha_unit_of_measurement": "°C" },
-      { "number": 1, "description": "Light Sensor",       "type": "LIGHT" },
-      { "number": 2, "description": "Humidity",           "type": "HUMIDITY" }
+      { "number": 3, "description": "Temperature", "type": "TEMPERATURE", "ha_unit_of_measurement": "°C" },
+      { "number": 1, "description": "Light Sensor", "type": "LIGHT" },
+      { "number": 2, "description": "Humidity",     "type": "HUMIDITY" }
     ],
     "LOCMOOD": [
       { "number": 1, "description": "Watch TV",        "type": "scene" },
       { "number": 2, "description": "Romantic Dinner", "type": "scene" }
     ],
     "GENMOOD": [
-      { "number": 1, "description": "All off",       "type": "scene" },
-      { "number": 2, "description": "Downstairs off","type": "scene" }
+      { "number": 1, "description": "All off",        "type": "scene" },
+      { "number": 2, "description": "Downstairs off", "type": "scene" }
     ],
     "TIMEDMOOD": [
       { "number": 1, "description": "Outdoor light", "type": "scene" }
@@ -132,11 +159,11 @@ Entity IDs follow this pattern:
 
 Examples:
 ```
-light.teletask_my_teletask_1_23      → RELAY #23 (light)
-light.teletask_my_teletask_2_1       → DIMMER #1
-cover.teletask_my_teletask_6_1       → MOTOR #1 (blind)
-scene.teletask_my_teletask_8_1       → LOCMOOD #1
-sensor.teletask_my_teletask_20_3     → SENSOR #3
+light.teletask_my_teletask_1_23          → RELAY #23 (light)
+light.teletask_my_teletask_2_1           → DIMMER #1
+cover.teletask_my_teletask_6_1           → MOTOR #1 (blind)
+scene.teletask_my_teletask_8_1           → LOCMOOD #1
+sensor.teletask_my_teletask_20_3         → SENSOR #3
 binary_sensor.teletask_my_teletask_62_42 → INPUT #42
 ```
 
@@ -216,9 +243,9 @@ The integration maintains a persistent TCP connection and receives **real-time p
 | Auto-discovery in HA | Via MQTT discovery | ✅ Native config flow |
 | Real-time updates | ✅ Yes (via MQTT) | ✅ Yes (direct TCP) |
 | Admin web interface | ✅ Yes | ❌ No (use HA UI) |
+| Config via file | `config.json` mounted in Docker | ✅ `/config/teletask/config.json` |
 | DISPLAYMESSAGE | ✅ Yes | 🚧 Not yet |
 | TEMPERATURECONTROL | ✅ Yes | 🚧 Not yet |
-| Config format | `config.json` file | Same JSON, pasted in UI |
 
 ---
 

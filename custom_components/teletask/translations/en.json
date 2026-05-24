@@ -7,18 +7,52 @@
         "data": {
           "host": "IP Address / Hostname",
           "port": "TCP Port",
-          "central_id": "Central Unit ID",
-          "config_json": "Component Configuration (JSON)"
+          "central_id": "Central Unit ID"
+        },
+        "data_description": {
+          "host": "The IP address or hostname of your Teletask central unit.",
+          "port": "TCP port of the central unit — default is {default_port}.",
+          "central_id": "A unique name to identify this central unit, e.g. my_teletask."
+        }
+      },
+      "config": {
+        "title": "Teletask Component Configuration",
+        "description": "Enter the path to your config.json file on the Home Assistant server.\n\nExample: `{example_path}`\n\nRelative paths are resolved from `/config/`. The file must be inside your `/config/` directory.",
+        "data": {
+          "config_file_path": "Path to config.json"
+        },
+        "data_description": {
+          "config_file_path": "Full or relative path to your Teletask config.json file, e.g. /config/teletask/config.json"
         }
       }
     },
     "error": {
-      "cannot_connect": "Cannot connect to the Teletask central unit.",
-      "invalid_json": "Invalid JSON configuration.",
-      "unknown": "Unexpected error"
+      "cannot_connect": "Cannot connect to the Teletask central unit. Check the IP address and port.",
+      "file_not_found": "File not found. Make sure the path is correct and the file exists.",
+      "invalid_json": "The file does not contain valid JSON. Please check the file content.",
+      "cannot_read_file": "Could not read the file. Check file permissions.",
+      "path_outside_config": "For security reasons, the file must be inside the /config/ directory.",
+      "unknown": "Unexpected error — check the Home Assistant logs."
     },
     "abort": {
       "already_configured": "This Teletask central unit is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Update Teletask Configuration",
+        "description": "Point to a new or updated config.json file.\n\nExample: `{example_path}`",
+        "data": {
+          "config_file_path": "Path to config.json"
+        }
+      }
+    },
+    "error": {
+      "file_not_found": "File not found.",
+      "invalid_json": "File contains invalid JSON.",
+      "cannot_read_file": "Cannot read the file.",
+      "path_outside_config": "File must be inside /config/."
     }
   }
 }
