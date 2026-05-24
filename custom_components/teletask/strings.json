@@ -1,0 +1,24 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Teletask Central Unit",
+        "description": "Enter the connection details for your Teletask central unit. Paste your config.json content in the last field.",
+        "data": {
+          "host": "IP Address / Hostname",
+          "port": "TCP Port (default: 55957)",
+          "central_id": "Central Unit ID (any unique name)",
+          "config_json": "Component Configuration (JSON)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to the Teletask central unit. Check the IP address and port.",
+      "invalid_json": "The configuration JSON is invalid. Please check the format.",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This Teletask central unit is already configured."
+    }
+  }
+}
