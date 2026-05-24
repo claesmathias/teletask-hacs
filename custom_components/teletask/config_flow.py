@@ -23,7 +23,6 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Step 1 — connection details only (no JSON here)
 STEP_CONNECTION_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_HOST): str,
@@ -32,7 +31,6 @@ STEP_CONNECTION_SCHEMA = vol.Schema(
     }
 )
 
-# Step 2 — config file path (resolved on the HA server filesystem)
 STEP_CONFIG_SCHEMA = vol.Schema(
     {
         vol.Required("config_file_path"): str,
@@ -40,12 +38,22 @@ STEP_CONFIG_SCHEMA = vol.Schema(
 )
 
 
+async def _async_read_file(path: str) -> str:
+    """Read a file on the executor thread pool — never blocks the event loop."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _read_file_sync, path)
+
+
+def _read_file_sync(path: str) -> str:
+    with open(path, encoding="utf-8") as fh:
+        return fh.read()
+
+
 class TeletaskConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """
     Two-step config flow:
       Step 1 — host / port / central_id
-      Step 2 — path to the config.json file on the HA server
-               (e.g. /config/teletask/config.json)
+      Step 2 — path to config.json on the HA server
     """
 
     VERSION = 1
@@ -63,7 +71,7 @@ class TeletaskConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            ok = await self._test_connection(user_input[CONF_HOST], user_input[CONF_PORT])
+            ok = await _async_test_connection(user_input[CONF_HOST], user_input[CONF_PORT])
             if not ok:
                 errors["base"] = "cannot_connect"
             else:
@@ -74,9 +82,7 @@ class TeletaskConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=STEP_CONNECTION_SCHEMA,
             errors=errors,
-            description_placeholders={
-                "default_port": str(DEFAULT_PORT),
-            },
+            description_placeholders={"default_port": str(DEFAULT_PORT)},
         )
 
     # ------------------------------------------------------------------
@@ -96,18 +102,18 @@ class TeletaskConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not os.path.isabs(file_path):
                 file_path = os.path.join("/config", file_path)
 
-            # Security guard — must stay within /config
             real_path = os.path.realpath(file_path)
+
+            # Security: must stay inside /config
             if not real_path.startswith(os.path.realpath("/config")):
                 errors["config_file_path"] = "path_outside_config"
             elif not os.path.isfile(real_path):
                 errors["config_file_path"] = "file_not_found"
             else:
                 try:
-                    with open(real_path, encoding="utf-8") as fh:
-                        raw = fh.read()
-                    # Validate it's actually JSON
-                    json.loads(raw)
+                    # ✅ Non-blocking file read via executor
+                    raw = await _async_read_file(real_path)
+                    json.loads(raw)  # validate JSON
                     config_json = raw
                 except json.JSONDecodeError:
                     errors["config_file_path"] = "invalid_json"
@@ -115,55 +121,35 @@ class TeletaskConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["config_file_path"] = "cannot_read_file"
 
             if not errors:
-                entry_data = {
-                    **self._connection_data,
-                    CONF_CONFIG_JSON: config_json,
-                }
                 await self.async_set_unique_id(
                     f"{self._connection_data[CONF_HOST]}:{self._connection_data[CONF_PORT]}"
                 )
                 self._abort_if_unique_id_configured()
                 return self.async_create_entry(
                     title=f"Teletask ({self._connection_data[CONF_CENTRAL_ID]})",
-                    data=entry_data,
+                    data={**self._connection_data, CONF_CONFIG_JSON: config_json},
                 )
 
         return self.async_show_form(
             step_id="config",
             data_schema=STEP_CONFIG_SCHEMA,
             errors=errors,
-            description_placeholders={
-                "example_path": "/config/teletask/config.json",
-            },
+            description_placeholders={"example_path": "/config/teletask/config.json"},
         )
 
     # ------------------------------------------------------------------
-    # Options flow — allows changing the config file path later
+    # Options flow — re-point to a different config.json after setup
     # ------------------------------------------------------------------
 
     @staticmethod
-    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> TeletaskOptionsFlow:
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> TeletaskOptionsFlow:
         return TeletaskOptionsFlow(config_entry)
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    async def _test_connection(host: str, port: int) -> bool:
-        try:
-            _, writer = await asyncio.wait_for(
-                asyncio.open_connection(host, port), timeout=5
-            )
-            writer.close()
-            await writer.wait_closed()
-            return True
-        except (OSError, asyncio.TimeoutError):
-            return False
 
 
 class TeletaskOptionsFlow(config_entries.OptionsFlow):
-    """Allow re-pointing to a different config.json after initial setup."""
+    """Allow updating the config.json path after initial setup."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._config_entry = config_entry
@@ -179,16 +165,15 @@ class TeletaskOptionsFlow(config_entries.OptionsFlow):
                 file_path = os.path.join("/config", file_path)
 
             real_path = os.path.realpath(file_path)
+
             if not real_path.startswith(os.path.realpath("/config")):
                 errors["config_file_path"] = "path_outside_config"
             elif not os.path.isfile(real_path):
                 errors["config_file_path"] = "file_not_found"
             else:
                 try:
-                    with open(real_path, encoding="utf-8") as fh:
-                        raw = fh.read()
+                    raw = await _async_read_file(real_path)
                     json.loads(raw)
-                    # Persist new JSON into the config entry data
                     self.hass.config_entries.async_update_entry(
                         self._config_entry,
                         data={**self._config_entry.data, CONF_CONFIG_JSON: raw},
@@ -199,14 +184,28 @@ class TeletaskOptionsFlow(config_entries.OptionsFlow):
                 except OSError:
                     errors["config_file_path"] = "cannot_read_file"
 
-        current_path = ""  # don't pre-fill for security
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
-                {vol.Required("config_file_path", default=current_path): str}
+                {vol.Required("config_file_path", default=""): str}
             ),
             errors=errors,
-            description_placeholders={
-                "example_path": "/config/teletask/config.json",
-            },
+            description_placeholders={"example_path": "/config/teletask/config.json"},
         )
+
+
+# ------------------------------------------------------------------
+# Shared helpers (module-level, not inside a class)
+# ------------------------------------------------------------------
+
+async def _async_test_connection(host: str, port: int) -> bool:
+    """Test TCP reachability without blocking the event loop."""
+    try:
+        _, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port), timeout=5
+        )
+        writer.close()
+        await writer.wait_closed()
+        return True
+    except (OSError, asyncio.TimeoutError):
+        return False

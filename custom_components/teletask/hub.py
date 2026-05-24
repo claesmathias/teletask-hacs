@@ -2,9 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-from collections.abc import Callable
 from typing import Any
 
 from homeassistant.core import HomeAssistant, callback
@@ -33,10 +31,10 @@ class TeletaskHub:
         self.host = host
         self.port = port
         self.central_id = central_id
-        self.config = config  # parsed config.json
-        self._client = TeletaskClient(host, port, self._on_event)
+        self.config = config
+        self._client = TeletaskClient(host, port, self._on_event, self._on_disconnect)
         self._reconnect_task: asyncio.Task | None = None
-        self._components: dict[tuple[int, int], dict] = {}  # (function, number) -> component cfg
+        self._components: dict[tuple[int, int], dict] = {}
         self._component_states: dict[tuple[int, int], dict] = {}
 
     # ------------------------------------------------------------------
@@ -44,17 +42,20 @@ class TeletaskHub:
     # ------------------------------------------------------------------
 
     async def async_setup(self) -> bool:
-        """Parse config and connect."""
         self._parse_config()
         connected = await self._client.connect()
         if connected:
             await self._subscribe_all()
         else:
+            _LOGGER.warning(
+                "Could not connect to Teletask central at %s:%s — will retry every %ss",
+                self.host, self.port, RECONNECT_INTERVAL,
+            )
             self._schedule_reconnect()
-        return True  # always return True; reconnect handles the rest
+        return True
 
     async def async_stop(self) -> None:
-        if self._reconnect_task:
+        if self._reconnect_task and not self._reconnect_task.done():
             self._reconnect_task.cancel()
         await self._client.disconnect()
 
@@ -63,20 +64,19 @@ class TeletaskHub:
     # ------------------------------------------------------------------
 
     def _parse_config(self) -> None:
-        """Build internal component registry from config.json data."""
         component_types = self.config.get("componentsTypes", {})
         function_map = {
-            "RELAY":      FunctionCode.RELAY,
-            "DIMMER":     FunctionCode.DIMMER,
-            "MOTOR":      FunctionCode.MOTOR,
-            "LOCMOOD":    FunctionCode.LOCMOOD,
-            "GENMOOD":    FunctionCode.GENMOOD,
-            "TIMEDMOOD":  FunctionCode.TIMEDMOOD,
-            "FLAG":       FunctionCode.FLAG,
-            "SENSOR":     FunctionCode.SENSOR,
-            "COND":       FunctionCode.COND,
-            "INPUT":      FunctionCode.INPUT,
-            "TIMEDFNC":   FunctionCode.TIMEDFNC,
+            "RELAY":     FunctionCode.RELAY,
+            "DIMMER":    FunctionCode.DIMMER,
+            "MOTOR":     FunctionCode.MOTOR,
+            "LOCMOOD":   FunctionCode.LOCMOOD,
+            "GENMOOD":   FunctionCode.GENMOOD,
+            "TIMEDMOOD": FunctionCode.TIMEDMOOD,
+            "FLAG":      FunctionCode.FLAG,
+            "SENSOR":    FunctionCode.SENSOR,
+            "COND":      FunctionCode.COND,
+            "INPUT":     FunctionCode.INPUT,
+            "TIMEDFNC":  FunctionCode.TIMEDFNC,
         }
         for type_name, components in component_types.items():
             fn = function_map.get(type_name)
@@ -86,13 +86,13 @@ class TeletaskHub:
                 number = comp["number"]
                 key = (int(fn), number)
                 self._components[key] = {
-                    "function": int(fn),
+                    "function":      int(fn),
                     "function_name": type_name,
-                    "number": number,
-                    "description": comp.get("description", f"{type_name} {number}"),
-                    "type": comp.get("type"),
-                    "ha_type": comp.get("hatype"),
-                    "config": comp,
+                    "number":        number,
+                    "description":   comp.get("description", f"{type_name} {number}"),
+                    "type":          comp.get("type"),
+                    "ha_type":       comp.get("hatype"),
+                    "config":        comp,
                 }
                 self._component_states[key] = {}
 
@@ -101,18 +101,16 @@ class TeletaskHub:
     # ------------------------------------------------------------------
 
     async def _subscribe_all(self) -> None:
-        """Subscribe to all configured components."""
         for fn, number in self._components:
             await self._client.subscribe(fn, number)
-            await asyncio.sleep(0.02)  # small delay to avoid flooding
+            await asyncio.sleep(0.02)
 
     # ------------------------------------------------------------------
-    # Event handling
+    # Event / disconnect callbacks (called from client)
     # ------------------------------------------------------------------
 
     @callback
     def _on_event(self, event: TeletaskEvent) -> None:
-        """Called (from the TCP receive loop) when the central sends an update."""
         key = (event.function, event.number)
         self._component_states[key] = event.state
         signal = SIGNAL_STATE_UPDATED.format(
@@ -122,19 +120,23 @@ class TeletaskHub:
         )
         async_dispatcher_send(self.hass, signal, event.state)
 
+    @callback
+    def _on_disconnect(self) -> None:
+        """Called by the client when the TCP connection is lost."""
+        _LOGGER.warning("Lost connection to Teletask central — scheduling reconnect")
+        self._schedule_reconnect()
+
     # ------------------------------------------------------------------
-    # Commands — called by HA entities
+    # Commands
     # ------------------------------------------------------------------
 
     async def async_set_relay(self, number: int, state: bool) -> None:
         await self._client.set_state(FunctionCode.RELAY, number, 0xFF if state else 0x00)
 
     async def async_set_dimmer(self, number: int, brightness: int) -> None:
-        """brightness 0-100."""
         await self._client.set_state(FunctionCode.DIMMER, number, max(0, min(100, brightness)))
 
     async def async_set_motor(self, number: int, direction: str) -> None:
-        """direction: UP / DOWN / STOP."""
         param = {"UP": 1, "DOWN": 2, "STOP": 0}.get(direction.upper(), 0)
         await self._client.set_state(FunctionCode.MOTOR, number, param)
 
@@ -165,17 +167,18 @@ class TeletaskHub:
     # ------------------------------------------------------------------
 
     def _schedule_reconnect(self) -> None:
-        if self._reconnect_task is None or self._reconnect_task.done():
-            self._reconnect_task = self.hass.loop.create_task(self._reconnect_loop())
+        if self._reconnect_task and not self._reconnect_task.done():
+            return  # already running
+        self._reconnect_task = self.hass.loop.create_task(self._reconnect_loop())
 
     async def _reconnect_loop(self) -> None:
         while True:
             await asyncio.sleep(RECONNECT_INTERVAL)
             if self._client.connected:
-                break
-            _LOGGER.info("Attempting reconnect to Teletask central…")
+                return
+            _LOGGER.info("Attempting reconnect to Teletask central at %s:%s…", self.host, self.port)
             connected = await self._client.connect()
             if connected:
                 await self._subscribe_all()
                 _LOGGER.info("Reconnected to Teletask central.")
-                break
+                return
