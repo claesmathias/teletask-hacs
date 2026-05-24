@@ -149,6 +149,9 @@ class TeletaskHub:
     async def async_set_relay(self, number: int, state: bool) -> None:
         await self._client.set_state(FunctionCode.RELAY, number, 0xFF if state else 0x00)
         self._optimistic_update(FunctionCode.RELAY, number, {"state": "ON" if state else "OFF"})
+        # GET confirms the new state; the CMD=0x10 response overwrites the optimistic value
+        # with the actual central state, correcting any mismatch.
+        await self._client.get_state(FunctionCode.RELAY, number)
 
     async def async_set_dimmer(self, number: int, brightness: int) -> None:
         brightness = max(0, min(100, brightness))
