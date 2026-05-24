@@ -130,11 +130,33 @@ class TeletaskHub:
     # Commands
     # ------------------------------------------------------------------
 
+    def _optimistic_update(self, function: int, number: int, state: dict) -> None:
+        """Update local state immediately after a SET command.
+
+        The central does not echo SET commands back to the sender — push events
+        (CMD=0x06) only go to OTHER subscribed clients.  We update state
+        optimistically so HA reflects the change without waiting for a push.
+        """
+        key = (function, number)
+        self._component_states[key] = state
+        signal = SIGNAL_STATE_UPDATED.format(
+            central_id=self.central_id,
+            function=function,
+            number=number,
+        )
+        async_dispatcher_send(self.hass, signal, state)
+
     async def async_set_relay(self, number: int, state: bool) -> None:
         await self._client.set_state(FunctionCode.RELAY, number, 0xFF if state else 0x00)
+        self._optimistic_update(FunctionCode.RELAY, number, {"state": "ON" if state else "OFF"})
 
     async def async_set_dimmer(self, number: int, brightness: int) -> None:
-        await self._client.set_state(FunctionCode.DIMMER, number, max(0, min(100, brightness)))
+        brightness = max(0, min(100, brightness))
+        await self._client.set_state(FunctionCode.DIMMER, number, brightness)
+        self._optimistic_update(FunctionCode.DIMMER, number, {
+            "state": "ON" if brightness > 0 else "OFF",
+            "brightness": brightness,
+        })
 
     async def async_set_motor(self, number: int, direction: str) -> None:
         param = {"UP": 1, "DOWN": 2, "STOP": 0}.get(direction.upper(), 0)
@@ -145,12 +167,15 @@ class TeletaskHub:
 
     async def async_set_mood(self, function: int, number: int, state: bool) -> None:
         await self._client.set_state(function, number, 0xFF if state else 0x00)
+        self._optimistic_update(function, number, {"state": "ON" if state else "OFF"})
 
     async def async_set_flag(self, number: int, state: bool) -> None:
         await self._client.set_state(FunctionCode.FLAG, number, 0xFF if state else 0x00)
+        self._optimistic_update(FunctionCode.FLAG, number, {"state": "ON" if state else "OFF"})
 
     async def async_set_timedfnc(self, number: int, state: bool) -> None:
         await self._client.set_state(FunctionCode.TIMEDFNC, number, 0xFF if state else 0x00)
+        self._optimistic_update(FunctionCode.TIMEDFNC, number, {"state": "ON" if state else "OFF"})
 
     # ------------------------------------------------------------------
     # State queries
@@ -177,6 +202,7 @@ class TeletaskHub:
             if self._client.connected:
                 return
             _LOGGER.info("Attempting reconnect to Teletask central at %s:%s…", self.host, self.port)
+            self._client.clear_subscriptions()
             connected = await self._client.connect()
             if connected:
                 await self._subscribe_all()

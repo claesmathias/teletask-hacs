@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any
 
@@ -26,15 +27,17 @@ class FunctionCode(IntEnum):
     TIMEDFNC  = 52
 
 
-CMD_SET = 0x07
-CMD_GET = 0x06
-CMD_LOG = 0x03
+CMD_SET        = 0x07
+CMD_GET        = 0x06
+CMD_LOG        = 0x03
+CMD_GROUPGET   = 0x09  # batch state request; central replies with EVENT per output
+CMD_KEEP_ALIVE = 0x0B  # must be sent immediately after TCP connect
+CMD_EVENT      = 0x10  # command byte used in all frames sent BY the central
+CMD_ACK        = 0x0A  # acknowledge byte sent by central after valid checksum
 
 STATE_OFF = 0
 STATE_ON  = 255
 
-
-from dataclasses import dataclass, field
 
 @dataclass
 class TeletaskEvent:
@@ -52,9 +55,11 @@ class TeletaskClient:
         port: int,
         event_callback: Callable[[TeletaskEvent], None],
         disconnect_callback: Callable[[], None] | None = None,
+        central_id: int = 1,
     ) -> None:
         self.host = host
         self.port = port
+        self._central_id = central_id
         self._event_callback = event_callback
         self._disconnect_callback = disconnect_callback
         self._reader: asyncio.StreamReader | None = None
@@ -76,12 +81,19 @@ class TeletaskClient:
             )
             self._connected = True
             _LOGGER.info("Connected to Teletask central at %s:%s", self.host, self.port)
+            # Send the mandatory handshake before the central times out and closes.
+            await self._handshake()
             self._receive_task = asyncio.ensure_future(self._receive_loop())
             self._keep_alive_task = asyncio.ensure_future(self._keep_alive_loop())
             return True
         except (OSError, asyncio.TimeoutError) as exc:
             _LOGGER.error("Failed to connect to Teletask central: %s", exc)
             return False
+
+    async def _handshake(self) -> None:
+        """Send the initial KEEP_ALIVE packet required by the central."""
+        _LOGGER.debug("Sending KEEP_ALIVE handshake")
+        await self._send(self._build_keep_alive())
 
     async def disconnect(self) -> None:
         self._connected = False
@@ -104,34 +116,55 @@ class TeletaskClient:
     # ------------------------------------------------------------------
 
     async def set_state(self, function: int, number: int, param1: int, param2: int = 0) -> None:
-        await self._send(self._build_set(function, number, param1, param2))
+        await self._send(self._build_set(function, number, param1))
 
     async def get_state(self, function: int, number: int) -> None:
         await self._send(self._build_get(function, number))
 
+    def clear_subscriptions(self) -> None:
+        self._subscribed_components.clear()
+
     async def subscribe(self, function: int, number: int) -> None:
         self._subscribed_components.append((function, number))
+        # GROUPGET triggers an immediate CMD=0x10 state reply.
+        await self._send(self._build_groupget(function, [number]))
+        # LOG subscribes for push events (CMD=0x06) on state changes.
         await self._send(self._build_log(function, number))
 
     # ------------------------------------------------------------------
     # Framing
     # ------------------------------------------------------------------
 
-    def _build_set(self, function: int, number: int, param1: int, param2: int) -> bytes:
-        payload = bytes([CMD_SET, function, (number >> 8) & 0xFF, number & 0xFF, param1, param2])
+    def _build_keep_alive(self) -> bytes:
+        # KEEP_ALIVE has no parameters — LENGTH=3 means just [CMD_KEEP_ALIVE].
+        payload = bytes([CMD_KEEP_ALIVE])
+        return self._frame(payload)
+
+    def _build_set(self, function: int, number: int, param1: int) -> bytes:
+        # SET: [CMD, CID, FN, NUM_HI, NUM_LO, SETTING] — no param2.
+        payload = bytes([CMD_SET, self._central_id, function, (number >> 8) & 0xFF, number & 0xFF, param1])
         return self._frame(payload)
 
     def _build_get(self, function: int, number: int) -> bytes:
-        payload = bytes([CMD_GET, function, (number >> 8) & 0xFF, number & 0xFF, 0, 0])
+        payload = bytes([CMD_GET, self._central_id, function, (number >> 8) & 0xFF, number & 0xFF])
         return self._frame(payload)
 
     def _build_log(self, function: int, number: int) -> bytes:
-        payload = bytes([CMD_LOG, function, (number >> 8) & 0xFF, number & 0xFF, 0, 0])
+        # LOG subscribes per component: [CMD, FN, NUM_HI, NUM_LO, 0xFF=subscribe, 0x00].
+        payload = bytes([CMD_LOG, function, (number >> 8) & 0xFF, number & 0xFF, 0xFF, 0x00])
+        return self._frame(payload)
+
+    def _build_groupget(self, function: int, numbers: list[int]) -> bytes:
+        payload = bytes([CMD_GROUPGET, self._central_id, function])
+        for n in numbers:
+            payload += bytes([(n >> 8) & 0xFF, n & 0xFF])
         return self._frame(payload)
 
     @staticmethod
     def _frame(payload: bytes) -> bytes:
-        length = len(payload) + 3
+        # LENGTH includes the STX and LENGTH bytes themselves but NOT the checksum.
+        # So: LENGTH = len(payload) + 2 (for STX + LENGTH byte).
+        length = len(payload) + 2
         msg = bytes([TELETASK_STX, length]) + payload
         checksum = sum(msg) & 0xFF
         return msg + bytes([checksum])
@@ -140,6 +173,7 @@ class TeletaskClient:
         if not self._connected or self._writer is None:
             _LOGGER.warning("Cannot send: not connected")
             return
+        _LOGGER.debug("TX: %s", data.hex(" "))
         try:
             self._writer.write(data)
             await self._writer.drain()
@@ -159,8 +193,14 @@ class TeletaskClient:
                 if not data:
                     _LOGGER.warning("Teletask central closed the connection")
                     break
+                _LOGGER.debug("RX: %s", data.hex(" "))
                 buffer.extend(data)
-                while True:
+                while buffer:
+                    # Single ACK byte from central — acknowledges a valid frame was received.
+                    if buffer[0] == CMD_ACK:
+                        _LOGGER.debug("RX: ACK (0x0A)")
+                        buffer = buffer[1:]
+                        continue
                     event, consumed = self._parse_frame(buffer)
                     if consumed == 0:
                         break
@@ -198,28 +238,40 @@ class TeletaskClient:
                 return None, len(buf)
 
         length = buf[1]
-        if len(buf) < length:
+        # LENGTH already counts STX + LENGTH byte; total frame = LENGTH + 1 (just the CS byte).
+        total = length + 1
+        if len(buf) < total:
             return None, 0
 
-        frame = buf[:length]
+        frame = buf[:total]
         expected_cs = sum(frame[:-1]) & 0xFF
         if frame[-1] != expected_cs:
             _LOGGER.debug("Checksum mismatch, skipping byte")
             return None, 1
 
         event = self._decode_frame(frame)
-        return event, length
+        return event, total
 
     def _decode_frame(self, frame: bytes) -> TeletaskEvent | None:
         if len(frame) < 8:
             return None
-        command  = frame[2]
-        function = frame[3]
-        number   = (frame[4] << 8) | frame[5]
-        param1   = frame[6]
-        param2   = frame[7] if len(frame) > 8 else 0
+        command = frame[2]
 
-        if command not in (CMD_SET, CMD_GET, CMD_LOG):
+        if command == CMD_EVENT:
+            # GROUPGET response: [STX, LEN, 0x10, CID, FN, NUM_HI, NUM_LO, ERROR, STATE..., CS]
+            if len(frame) < 10:
+                return None
+            function = frame[4]
+            number   = (frame[5] << 8) | frame[6]
+            param1   = frame[8]
+            param2   = frame[9] if len(frame) > 10 else 0
+        elif command == CMD_GET:
+            # SET/LOG push response: [STX, LEN, 0x06, FN, NUM_HI, NUM_LO, STATE..., CS]
+            function = frame[3]
+            number   = (frame[4] << 8) | frame[5]
+            param1   = frame[6]
+            param2   = frame[7] if len(frame) > 8 else 0
+        else:
             return None
 
         state = self._decode_state(function, param1, param2, frame)
@@ -251,7 +303,8 @@ class TeletaskClient:
         if function == FunctionCode.TIMEDFNC:
             return {"state": "ON" if param1 == STATE_ON else "OFF"}
         if function == FunctionCode.SENSOR:
-            raw = param1 + param2 / 10.0 if param2 else float(param1)
+            # Temperature: 2-byte big-endian value in tenths of Kelvin, converted to Celsius.
+            raw = ((param1 << 8) | param2) / 10.0 - 273.0
             return {"state": raw, "value": raw}
         return None
 
@@ -260,9 +313,8 @@ class TeletaskClient:
     # ------------------------------------------------------------------
 
     async def _keep_alive_loop(self) -> None:
-        """Send a keep-alive GET every 30s to prevent the central from timing out."""
+        """Send a KEEP_ALIVE every 20s to prevent the central from timing out."""
         while self._connected:
-            await asyncio.sleep(30)
-            if self._connected and self._subscribed_components:
-                fn, num = self._subscribed_components[0]
-                await self.get_state(fn, num)
+            await asyncio.sleep(20)
+            if self._connected:
+                await self._send(self._build_keep_alive())

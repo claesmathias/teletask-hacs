@@ -1,0 +1,8 @@
+{
+  "type": "PICOS",
+  "componentsTypes": {
+    "RELAY": [
+      { "number": 5,  "description": "Kitchen Table",          "type": "light" }
+    ]
+  }
+}
