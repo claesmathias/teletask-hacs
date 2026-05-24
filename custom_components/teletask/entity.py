@@ -43,8 +43,11 @@ class TeletaskEntity(Entity):
         self.async_on_remove(
             async_dispatcher_connect(self.hass, signal, self._handle_state_update)
         )
-        # Fetch initial state
+        # Load state already cached by the hub from startup subscriptions.
+        # Call async_write_ha_state() explicitly so we override any stale state
+        # HA may have restored from a previous session.
         self._state_dict = self._hub.get_state(self._function, self._number)
+        self.async_write_ha_state()
 
     def _handle_state_update(self, state: dict) -> None:
         self._state_dict = state

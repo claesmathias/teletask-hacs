@@ -104,6 +104,9 @@ class TeletaskHub:
         for fn, number in self._components:
             await self._client.subscribe(fn, number)
             await asyncio.sleep(0.02)
+        # Give the central time to send all subscription responses before
+        # HA entities read the initial state via hub.get_state().
+        await asyncio.sleep(1.5)
 
     # ------------------------------------------------------------------
     # Event / disconnect callbacks (called from client)
