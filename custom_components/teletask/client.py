@@ -284,7 +284,9 @@ class TeletaskClient:
         if function == FunctionCode.RELAY:
             return {"state": "ON" if param1 == STATE_ON else "OFF"}
         if function == FunctionCode.DIMMER:
-            return {"state": "ON" if param1 > 0 else "OFF", "brightness": param1}
+            # Some firmware versions send 0xFF (relay-style "full on") instead of 100.
+            brightness = 100 if param1 == 0xFF else min(param1, 100)
+            return {"state": "ON" if param1 > 0 else "OFF", "brightness": brightness}
         if function == FunctionCode.MOTOR:
             direction_map = {0: "STOP", 1: "UP", 2: "DOWN"}
             return {

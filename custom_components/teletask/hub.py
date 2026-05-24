@@ -160,6 +160,7 @@ class TeletaskHub:
             "state": "ON" if brightness > 0 else "OFF",
             "brightness": brightness,
         })
+        await self._client.get_state(FunctionCode.DIMMER, number)
 
     async def async_set_motor(self, number: int, direction: str) -> None:
         param = {"UP": 1, "DOWN": 2, "STOP": 0}.get(direction.upper(), 0)

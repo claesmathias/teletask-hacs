@@ -75,7 +75,7 @@ class TeletaskDimmerLight(TeletaskEntity, LightEntity):
         raw = self._state_dict.get("brightness")
         if raw is None:
             return None
-        return round(raw * 255 / 100)
+        return min(255, max(0, round(raw * 255 / 100)))
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         if ATTR_BRIGHTNESS in kwargs:
