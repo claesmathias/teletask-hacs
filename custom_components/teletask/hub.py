@@ -152,9 +152,6 @@ class TeletaskHub:
     async def async_set_relay(self, number: int, state: bool) -> None:
         await self._client.set_state(FunctionCode.RELAY, number, 0xFF if state else 0x00)
         self._optimistic_update(FunctionCode.RELAY, number, {"state": "ON" if state else "OFF"})
-        # GET confirms the new state; the CMD=0x10 response overwrites the optimistic value
-        # with the actual central state, correcting any mismatch.
-        await self._client.get_state(FunctionCode.RELAY, number)
 
     async def async_set_dimmer(self, number: int, brightness: int) -> None:
         brightness = max(0, min(100, brightness))
@@ -163,7 +160,6 @@ class TeletaskHub:
             "state": "ON" if brightness > 0 else "OFF",
             "brightness": brightness,
         })
-        await self._client.get_state(FunctionCode.DIMMER, number)
 
     async def async_set_motor(self, number: int, direction: str) -> None:
         param = {"UP": 1, "DOWN": 2, "STOP": 0}.get(direction.upper(), 0)
@@ -183,6 +179,10 @@ class TeletaskHub:
     async def async_set_timedfnc(self, number: int, state: bool) -> None:
         await self._client.set_state(FunctionCode.TIMEDFNC, number, 0xFF if state else 0x00)
         self._optimistic_update(FunctionCode.TIMEDFNC, number, {"state": "ON" if state else "OFF"})
+
+    async def async_request_state(self, function: int, number: int) -> None:
+        """Send a GET to the central; the response arrives via dispatcher signal."""
+        await self._client.get_state(function, number)
 
     # ------------------------------------------------------------------
     # State queries
