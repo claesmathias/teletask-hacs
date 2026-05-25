@@ -28,7 +28,7 @@ async def async_setup_entry(
     entities: list[ButtonEntity] = []
 
     for comp in hub.get_components_by_function(FunctionCode.RELAY):
-        if comp.get("type") == "momentary":
+        if comp.get("ha_type") == "button":
             entities.append(TeletaskMomentaryButton(hub, comp))
 
     async_add_entities(entities)

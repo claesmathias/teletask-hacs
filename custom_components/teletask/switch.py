@@ -25,10 +25,9 @@ async def async_setup_entry(
     hub: TeletaskHub = hass.data[DOMAIN][entry.entry_id]
     entities: list[TeletaskEntity] = []
 
-    # RELAY with type "switch"
+    # RELAY with hatype "switch"
     for comp in hub.get_components_by_function(FunctionCode.RELAY):
-        ha_type = comp.get("type") or comp.get("ha_type") or "light"
-        if ha_type == "switch":
+        if comp.get("ha_type") == "switch":
             entities.append(TeletaskRelaySwitch(hub, comp))
 
     # FLAG components (hatype "switch" or "input_boolean" both map to a switch entity)

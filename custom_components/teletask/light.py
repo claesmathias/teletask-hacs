@@ -29,10 +29,9 @@ async def async_setup_entry(
     hub: TeletaskHub = hass.data[DOMAIN][entry.entry_id]
     entities: list[TeletaskEntity] = []
 
-    # RELAY components with type "light" (default for relays)
+    # RELAY components with hatype "light" (default for relays)
     for comp in hub.get_components_by_function(FunctionCode.RELAY):
-        ha_type = comp.get("type") or comp.get("ha_type") or "light"
-        if ha_type == "light":
+        if (comp.get("ha_type") or "light") == "light":
             entities.append(TeletaskRelayLight(hub, comp))
 
     # All DIMMER components are lights
