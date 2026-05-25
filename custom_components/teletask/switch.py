@@ -31,22 +31,22 @@ async def async_setup_entry(
         if ha_type == "switch":
             entities.append(TeletaskRelaySwitch(hub, comp))
 
-    # FLAG components
+    # FLAG components (hatype "switch" or "input_boolean" both map to a switch entity)
     for comp in hub.get_components_by_function(FunctionCode.FLAG):
-        ha_type = comp.get("type") or "switch"
-        if ha_type == "switch":
+        ha_type = comp.get("hatype") or comp.get("type") or "switch"
+        if ha_type in ("switch", "input_boolean"):
             entities.append(TeletaskFlagSwitch(hub, comp))
 
     # TIMED FUNCTION components (type=switch, not scene)
     for comp in hub.get_components_by_function(FunctionCode.TIMEDFNC):
-        ha_type = comp.get("type") or "switch"
+        ha_type = comp.get("hatype") or comp.get("type") or "switch"
         if ha_type == "switch":
             entities.append(TeletaskTimedFncSwitch(hub, comp))
 
     # MOODS that are configured as switch (not scene)
     for fn in (FunctionCode.LOCMOOD, FunctionCode.GENMOOD, FunctionCode.TIMEDMOOD):
         for comp in hub.get_components_by_function(fn):
-            ha_type = comp.get("type") or "switch"
+            ha_type = comp.get("hatype") or comp.get("type") or "switch"
             if ha_type == "switch":
                 entities.append(TeletaskMoodSwitch(hub, comp))
 
