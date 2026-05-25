@@ -12,7 +12,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
-from .const import CONF_CONFIG_JSON, CONF_HOST, CONF_PORT, CONF_CENTRAL_ID, DOMAIN
+from .const import CONF_CONFIG_JSON, CONF_DEBUG_LOG, CONF_HOST, CONF_PORT, CONF_CENTRAL_ID, DOMAIN
 from .hub import TeletaskHub
 
 _LOGGER = logging.getLogger(__name__)
@@ -27,8 +27,19 @@ PLATFORMS = [
 ]
 
 
+def _apply_log_level(entry: ConfigEntry) -> None:
+    debug = entry.options.get(CONF_DEBUG_LOG, entry.data.get(CONF_DEBUG_LOG, False))
+    level = logging.DEBUG if debug else logging.WARNING
+    for name in ("custom_components.teletask", "custom_components.teletask.client",
+                 "custom_components.teletask.hub", "custom_components.teletask.entity"):
+        logging.getLogger(name).setLevel(level)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Teletask from a config entry."""
+    _apply_log_level(entry)
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+
     config_json_str = entry.data.get(CONF_CONFIG_JSON, "{}")
     try:
         config = json.loads(config_json_str)
@@ -50,6 +61,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
+
+async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    _apply_log_level(entry)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

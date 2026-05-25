@@ -5,7 +5,8 @@ DOMAIN = "teletask"
 CONF_CENTRAL_ID  = "central_id"
 CONF_HOST        = "host"
 CONF_PORT        = "port"
-CONF_CONFIG_JSON = "config_json"
+CONF_CONFIG_JSON  = "config_json"
+CONF_DEBUG_LOG    = "debug_log"
 
 DEFAULT_PORT = 55957
 

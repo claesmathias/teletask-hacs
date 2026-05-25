@@ -45,7 +45,11 @@
         "title": "Update Teletask Configuration",
         "description": "Point to a new or updated config.json file.\n\nExample: `{example_path}`",
         "data": {
-          "config_file_path": "Path to config.json"
+          "config_file_path": "Path to config.json",
+          "debug_log": "Enable debug logging (TX/RX bytes)"
+        },
+        "data_description": {
+          "debug_log": "Logs every sent and received byte to the Home Assistant log at DEBUG level. Disable when not actively debugging."
         }
       }
     },

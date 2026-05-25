@@ -16,6 +16,7 @@ from homeassistant.data_entry_flow import FlowResult
 from .const import (
     CONF_CENTRAL_ID,
     CONF_CONFIG_JSON,
+    CONF_DEBUG_LOG,
     CONF_HOST,
     CONF_PORT,
     DEFAULT_PORT,
@@ -161,6 +162,9 @@ class TeletaskOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         errors: dict[str, str] = {}
+        current_debug = self._config_entry.options.get(
+            CONF_DEBUG_LOG, self._config_entry.data.get(CONF_DEBUG_LOG, False)
+        )
 
         if user_input is not None:
             file_path = user_input["config_file_path"].strip()
@@ -181,7 +185,10 @@ class TeletaskOptionsFlow(config_entries.OptionsFlow):
                         self._config_entry,
                         data={**self._config_entry.data, CONF_CONFIG_JSON: raw},
                     )
-                    return self.async_create_entry(title="", data={})
+                    return self.async_create_entry(
+                        title="",
+                        data={CONF_DEBUG_LOG: user_input.get(CONF_DEBUG_LOG, False)},
+                    )
                 except json.JSONDecodeError:
                     errors["config_file_path"] = "invalid_json"
                 except OSError:
@@ -189,9 +196,10 @@ class TeletaskOptionsFlow(config_entries.OptionsFlow):
 
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema(
-                {vol.Required("config_file_path", default=""): str}
-            ),
+            data_schema=vol.Schema({
+                vol.Required("config_file_path", default=""): str,
+                vol.Optional(CONF_DEBUG_LOG, default=current_debug): bool,
+            }),
             errors=errors,
             description_placeholders={"example_path": "/config/teletask/config.json"},
         )
