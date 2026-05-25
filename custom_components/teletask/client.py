@@ -38,6 +38,12 @@ CMD_ACK        = 0x0A  # acknowledge byte sent by central after valid checksum
 STATE_OFF = 0
 STATE_ON  = 255
 
+# Motor direction SET constants (per Teletask protocol docs)
+MOTOR_UP             = 1
+MOTOR_DOWN           = 2
+MOTOR_STOP           = 3
+MOTOR_GO_TO_POSITION = 11
+
 
 @dataclass
 class TeletaskEvent:
@@ -115,21 +121,24 @@ class TeletaskClient:
     # Commands
     # ------------------------------------------------------------------
 
-    async def set_state(self, function: int, number: int, param1: int, param2: int = 0) -> None:
-        await self._send(self._build_set(function, number, param1))
+    async def set_state(self, function: int, number: int, param1: int, param2: int | None = None) -> None:
+        await self._send(self._build_set(function, number, param1, param2))
 
     async def get_state(self, function: int, number: int) -> None:
         await self._send(self._build_get(function, number))
+
+    async def groupget(self, function: int, number: int) -> None:
+        await self._send(self._build_groupget(function, [number]))
+
+    async def log_subscribe(self, function: int) -> None:
+        """Subscribe for push events for ALL components of a function type."""
+        await self._send(self._build_log(function))
 
     def clear_subscriptions(self) -> None:
         self._subscribed_components.clear()
 
     async def subscribe(self, function: int, number: int) -> None:
         self._subscribed_components.append((function, number))
-        # GROUPGET triggers an immediate CMD=0x10 state reply.
-        await self._send(self._build_groupget(function, [number]))
-        # LOG subscribes for push events (CMD=0x06) on state changes.
-        await self._send(self._build_log(function, number))
 
     # ------------------------------------------------------------------
     # Framing
@@ -140,18 +149,20 @@ class TeletaskClient:
         payload = bytes([CMD_KEEP_ALIVE])
         return self._frame(payload)
 
-    def _build_set(self, function: int, number: int, param1: int) -> bytes:
-        # SET: [CMD, CID, FN, NUM_HI, NUM_LO, SETTING] — no param2.
+    def _build_set(self, function: int, number: int, param1: int, param2: int | None = None) -> bytes:
         payload = bytes([CMD_SET, self._central_id, function, (number >> 8) & 0xFF, number & 0xFF, param1])
+        if param2 is not None:
+            payload += bytes([param2])
         return self._frame(payload)
 
     def _build_get(self, function: int, number: int) -> bytes:
         payload = bytes([CMD_GET, self._central_id, function, (number >> 8) & 0xFF, number & 0xFF])
         return self._frame(payload)
 
-    def _build_log(self, function: int, number: int) -> bytes:
-        # LOG subscribes per component: [CMD, FN, NUM_HI, NUM_LO, 0xFF=subscribe, 0x00].
-        payload = bytes([CMD_LOG, function, (number >> 8) & 0xFF, number & 0xFF, 0xFF, 0x00])
+    def _build_log(self, function: int) -> bytes:
+        # LOG subscribes for ALL components of a function type: [CMD, FN, 0xFF=subscribe].
+        # No component number — this matches the Teletask protocol spec.
+        payload = bytes([CMD_LOG, function, 0xFF])
         return self._frame(payload)
 
     def _build_groupget(self, function: int, numbers: list[int]) -> bytes:
@@ -258,29 +269,36 @@ class TeletaskClient:
         command = frame[2]
 
         if command == CMD_EVENT:
-            # GROUPGET response: [STX, LEN, 0x10, CID, FN, NUM_HI, NUM_LO, ERROR, STATE..., CS]
+            # [STX, LEN, 0x10, CID, FN, NUM_HI, NUM_LO, ERROR, STATE..., CS]
             if len(frame) < 10:
                 return None
             function = frame[4]
             number   = (frame[5] << 8) | frame[6]
-            param1   = frame[8]
-            param2   = frame[9] if len(frame) > 10 else 0
+            # State bytes start at index 8 (after ERROR byte at [7]).
+            state_bytes = bytes(frame[8:-1])
         elif command == CMD_GET:
-            # SET/LOG push response: [STX, LEN, 0x06, FN, NUM_HI, NUM_LO, STATE..., CS]
+            # PICOS LOG push: [STX, LEN, 0x06, FN, NUM_HI, NUM_LO, STATE..., CS]
+            # (PICOS omits the CID byte that MICROS+ includes)
+            if len(frame) < 8:
+                return None
             function = frame[3]
             number   = (frame[4] << 8) | frame[5]
-            param1   = frame[6]
-            param2   = frame[7] if len(frame) > 8 else 0
+            state_bytes = bytes(frame[6:-1])
         else:
             return None
 
-        state = self._decode_state(function, param1, param2, frame)
+        state = self._decode_state(function, state_bytes)
         if state is None:
             return None
         return TeletaskEvent(function=function, number=number, state=state)
 
     @staticmethod
-    def _decode_state(function: int, param1: int, param2: int, frame: bytes) -> dict[str, Any] | None:
+    def _decode_state(function: int, state_bytes: bytes) -> dict[str, Any] | None:
+        if not state_bytes:
+            return None
+        param1 = state_bytes[0]
+        param2 = state_bytes[1] if len(state_bytes) > 1 else 0
+
         if function == FunctionCode.RELAY:
             return {"state": "ON" if param1 == STATE_ON else "OFF"}
         if function == FunctionCode.DIMMER:
@@ -288,12 +306,18 @@ class TeletaskClient:
             brightness = 100 if param1 == 0xFF else min(param1, 100)
             return {"state": "ON" if param1 > 0 else "OFF", "brightness": brightness}
         if function == FunctionCode.MOTOR:
-            direction_map = {0: "STOP", 1: "UP", 2: "DOWN"}
-            return {
-                "state": "ON" if param1 in (1, 2) else "OFF",
-                "last_direction": direction_map.get(param1, "STOP"),
-                "current_position": param2,
+            # state_bytes: [direction, power, protection, requested_pos, current_pos, ...]
+            direction_map = {1: "UP", 2: "DOWN", 3: "STOP", 6: "START_STOP", 7: "UP_STOP", 8: "DOWN_STOP"}
+            direction = direction_map.get(param1, "STOP")
+            # param2 is the power byte (0=OFF, 255=ON); position is at byte[4]
+            is_on = param2 == STATE_ON if len(state_bytes) > 1 else param1 in (1, 2)
+            result: dict[str, Any] = {
+                "state": "ON" if is_on else "OFF",
+                "last_direction": direction,
             }
+            if len(state_bytes) > 4:
+                result["current_position"] = state_bytes[4]
+            return result
         if function in (FunctionCode.LOCMOOD, FunctionCode.GENMOOD, FunctionCode.TIMEDMOOD):
             return {"state": "ON" if param1 == STATE_ON else "OFF"}
         if function == FunctionCode.FLAG:
@@ -301,11 +325,13 @@ class TeletaskClient:
         if function == FunctionCode.COND:
             return {"state": "ON" if param1 == STATE_ON else "OFF"}
         if function == FunctionCode.INPUT:
-            return {"state": "CLOSED" if param1 == STATE_ON else "OPEN"}
+            # Values per protocol: 1=short press, 2=closed, 3=open
+            input_map = {1: "SHORT_PRESS", 2: "CLOSED", 3: "OPEN"}
+            return {"state": input_map.get(param1, "OPEN")}
         if function == FunctionCode.TIMEDFNC:
             return {"state": "ON" if param1 == STATE_ON else "OFF"}
         if function == FunctionCode.SENSOR:
-            # Temperature: 2-byte big-endian value in tenths of Kelvin, converted to Celsius.
+            # Temperature: 2-byte big-endian in tenths of Kelvin → Celsius.
             raw = ((param1 << 8) | param2) / 10.0 - 273.0
             return {"state": raw, "value": raw}
         return None
@@ -315,8 +341,8 @@ class TeletaskClient:
     # ------------------------------------------------------------------
 
     async def _keep_alive_loop(self) -> None:
-        """Send a KEEP_ALIVE every 20s to prevent the central from timing out."""
+        """Send a KEEP_ALIVE every 60s to prevent the central from timing out."""
         while self._connected:
-            await asyncio.sleep(20)
+            await asyncio.sleep(60)
             if self._connected:
                 await self._send(self._build_keep_alive())

@@ -8,7 +8,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
-from .client import FunctionCode, TeletaskClient, TeletaskEvent
+from .client import FunctionCode, TeletaskClient, TeletaskEvent, MOTOR_STOP, MOTOR_GO_TO_POSITION
 from .const import DOMAIN, SIGNAL_STATE_UPDATED
 
 _LOGGER = logging.getLogger(__name__)
@@ -101,11 +101,19 @@ class TeletaskHub:
     # ------------------------------------------------------------------
 
     async def _subscribe_all(self) -> None:
+        # Step 1: Subscribe per function type (LOG covers all components of that type).
+        # The central also sends a "welcome" event with current state for each component.
+        seen: set[int] = set()
+        for fn, _ in self._components:
+            if fn not in seen:
+                await self._client.log_subscribe(fn)
+                seen.add(fn)
+                await asyncio.sleep(0.02)
+        # Step 2: GROUPGET per component to guarantee an immediate state reply.
         for fn, number in self._components:
-            await self._client.subscribe(fn, number)
+            await self._client.groupget(fn, number)
             await asyncio.sleep(0.02)
-        # Give the central time to send all subscription responses before
-        # HA entities read the initial state via hub.get_state().
+        # Give the central time to deliver all replies before entities read hub state.
         await asyncio.sleep(1.5)
 
     # ------------------------------------------------------------------
@@ -154,19 +162,31 @@ class TeletaskHub:
         self._optimistic_update(FunctionCode.RELAY, number, {"state": "ON" if state else "OFF"})
 
     async def async_set_dimmer(self, number: int, brightness: int) -> None:
-        brightness = max(0, min(100, brightness))
+        # 103 = PREVIOUS_STATE (restore last brightness); all other values clamp to 0-100.
+        if brightness != 103:
+            brightness = max(0, min(100, brightness))
         await self._client.set_state(FunctionCode.DIMMER, number, brightness)
-        self._optimistic_update(FunctionCode.DIMMER, number, {
-            "state": "ON" if brightness > 0 else "OFF",
-            "brightness": brightness,
-        })
+        # Optimistic update: if PREVIOUS_STATE (103) we don't know the actual brightness,
+        # so just mark as ON without changing the brightness value.
+        if brightness == 103:
+            current = dict(self._component_states.get((FunctionCode.DIMMER, number), {}))
+            current["state"] = "ON"
+            self._optimistic_update(FunctionCode.DIMMER, number, current)
+        else:
+            self._optimistic_update(FunctionCode.DIMMER, number, {
+                "state": "ON" if brightness > 0 else "OFF",
+                "brightness": brightness,
+            })
 
     async def async_set_motor(self, number: int, direction: str) -> None:
-        param = {"UP": 1, "DOWN": 2, "STOP": 0}.get(direction.upper(), 0)
+        # STOP=3 per Teletask protocol (SET_MTRSTOP=3, not 0)
+        param = {"UP": 1, "DOWN": 2, "STOP": MOTOR_STOP}.get(direction.upper(), MOTOR_STOP)
         await self._client.set_state(FunctionCode.MOTOR, number, param)
 
     async def async_set_motor_position(self, number: int, position: int) -> None:
-        await self._client.set_state(FunctionCode.MOTOR, number, 3, position)
+        position = max(0, min(100, position))
+        # MOTOR_GO_TO_POSITION=11 with position percentage as extra byte
+        await self._client.set_state(FunctionCode.MOTOR, number, MOTOR_GO_TO_POSITION, position)
 
     async def async_set_mood(self, function: int, number: int, state: bool) -> None:
         await self._client.set_state(function, number, 0xFF if state else 0x00)

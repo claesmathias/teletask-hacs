@@ -82,7 +82,8 @@ class TeletaskDimmerLight(TeletaskEntity, LightEntity):
             # Convert HA 0-255 to Teletask 0-100
             teletask_brightness = round(kwargs[ATTR_BRIGHTNESS] * 100 / 255)
         else:
-            teletask_brightness = 100
+            # 103 = restore previous brightness (PREVIOUS_STATE per Teletask protocol)
+            teletask_brightness = 103
         await self._hub.async_set_dimmer(self._number, teletask_brightness)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
