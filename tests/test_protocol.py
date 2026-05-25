@@ -49,7 +49,7 @@ def _make_event_frame(fn: int, number: int, *state_bytes: int) -> bytes:
         0,                           # ERROR byte
         *state_bytes,
     ])
-    length = len(body) - 1          # LENGTH counts STX + LENGTH itself
+    length = len(body)               # LENGTH = STX(1) + LENGTH(1) + payload bytes
     body = bytes([body[0], length]) + body[2:]
     return body + bytes([_checksum(body)])
 
@@ -64,7 +64,7 @@ def _make_push_frame(fn: int, number: int, *state_bytes: int) -> bytes:
         number & 0xFF,
         *state_bytes,
     ])
-    length = len(body) - 1
+    length = len(body)
     body = bytes([body[0], length]) + body[2:]
     return body + bytes([_checksum(body)])
 
@@ -327,7 +327,7 @@ class TestParsePushFrame:
 
 class TestDecodeState:
     def _decode(self, fn: int, *bytes_: int):
-        return TeletaskClient._decode_state(fn, bytes(*bytes_))
+        return TeletaskClient._decode_state(fn, bytes(bytes_))
 
     def test_relay_on(self):
         assert self._decode(FunctionCode.RELAY, STATE_ON) == {"state": "ON"}
