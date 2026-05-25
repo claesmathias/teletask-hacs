@@ -26,12 +26,12 @@ async def async_setup_entry(
 
     for fn in (FunctionCode.LOCMOOD, FunctionCode.GENMOOD, FunctionCode.TIMEDMOOD):
         for comp in hub.get_components_by_function(fn):
-            ha_type = comp.get("hatype") or comp.get("type") or "switch"
+            ha_type = comp.get("ha_type") or comp.get("type") or "switch"
             if ha_type == "scene":
                 entities.append(TeletaskScene(hub, comp))
 
     for comp in hub.get_components_by_function(FunctionCode.TIMEDFNC):
-        ha_type = comp.get("hatype") or comp.get("type") or "switch"
+        ha_type = comp.get("ha_type") or comp.get("type") or "switch"
         if ha_type == "scene":
             entities.append(TeletaskScene(hub, comp))
 
