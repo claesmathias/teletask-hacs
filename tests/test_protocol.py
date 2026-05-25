@@ -488,3 +488,208 @@ class TestBufferParsing:
         event, consumed = c._parse_frame(buf)
         assert event is not None
         assert consumed == len(frame)
+
+
+# ---------------------------------------------------------------------------
+# 7. Component-specific tests — real components from config.json
+# ---------------------------------------------------------------------------
+
+class TestEettafelRelay5:
+    """RELAY 5 — Eettafel (kitchen table light)."""
+
+    FUNCTION = FunctionCode.RELAY
+    NUMBER = 5
+
+    def test_event_on(self):
+        frame = _make_event_frame(self.FUNCTION, self.NUMBER, STATE_ON)
+        c = _client()
+        event, consumed = c._parse_frame(bytearray(frame))
+        assert consumed == len(frame)
+        assert event is not None
+        assert event.function == self.FUNCTION
+        assert event.number == self.NUMBER
+        assert event.state == {"state": "ON"}
+
+    def test_event_off(self):
+        frame = _make_event_frame(self.FUNCTION, self.NUMBER, STATE_OFF)
+        c = _client()
+        event, _ = c._parse_frame(bytearray(frame))
+        assert event is not None
+        assert event.state == {"state": "OFF"}
+
+    def test_picos_push_on(self):
+        frame = _make_push_frame(self.FUNCTION, self.NUMBER, STATE_ON)
+        c = _client()
+        event, consumed = c._parse_frame(bytearray(frame))
+        assert consumed == len(frame)
+        assert event is not None
+        assert event.function == self.FUNCTION
+        assert event.number == self.NUMBER
+        assert event.state == {"state": "ON"}
+
+    def test_picos_push_off(self):
+        frame = _make_push_frame(self.FUNCTION, self.NUMBER, STATE_OFF)
+        c = _client()
+        event, _ = c._parse_frame(bytearray(frame))
+        assert event is not None
+        assert event.state == {"state": "OFF"}
+
+    def test_set_on_bytes(self):
+        frame = _client()._build_set(self.FUNCTION, self.NUMBER, STATE_ON)
+        assert frame[2] == CMD_SET
+        assert frame[4] == self.FUNCTION
+        assert frame[5] == 0x00        # NUM_HI
+        assert frame[6] == 0x05        # NUM_LO = 5
+        assert frame[7] == STATE_ON
+        assert frame[-1] == _checksum(frame[:-1])
+
+    def test_set_off_bytes(self):
+        frame = _client()._build_set(self.FUNCTION, self.NUMBER, STATE_OFF)
+        assert frame[7] == STATE_OFF
+        assert frame[-1] == _checksum(frame[:-1])
+
+
+class TestTemperatureSensor19:
+    """SENSOR 19 — Temperature Sensor."""
+
+    FUNCTION = FunctionCode.SENSOR
+    NUMBER = 19
+
+    # 22.0°C → (22.0 + 273.0) × 10 = 2950 = 0x0B86
+    _22C = (0x0B, 0x86)
+    # 20.5°C → (20.5 + 273.0) × 10 = 2935 = 0x0B77
+    _20_5C = (0x0B, 0x77)
+
+    def test_event_22c(self):
+        frame = _make_event_frame(self.FUNCTION, self.NUMBER, *self._22C)
+        c = _client()
+        event, consumed = c._parse_frame(bytearray(frame))
+        assert consumed == len(frame)
+        assert event is not None
+        assert event.function == self.FUNCTION
+        assert event.number == self.NUMBER
+        assert event.state["value"] == pytest.approx(22.0)
+
+    def test_event_20_5c(self):
+        frame = _make_event_frame(self.FUNCTION, self.NUMBER, *self._20_5C)
+        c = _client()
+        event, _ = c._parse_frame(bytearray(frame))
+        assert event is not None
+        assert event.state["value"] == pytest.approx(20.5)
+
+    def test_picos_push_22c(self):
+        frame = _make_push_frame(self.FUNCTION, self.NUMBER, *self._22C)
+        c = _client()
+        event, consumed = c._parse_frame(bytearray(frame))
+        assert consumed == len(frame)
+        assert event is not None
+        assert event.state["value"] == pytest.approx(22.0)
+
+    def test_decode_has_both_keys(self):
+        """_decode_state returns both 'state' and 'value' for sensors."""
+        s = TeletaskClient._decode_state(self.FUNCTION, bytes(self._22C))
+        assert s["value"] == pytest.approx(22.0)
+        assert s["state"] == pytest.approx(22.0)
+
+    def test_get_frame_bytes(self):
+        frame = _client()._build_get(self.FUNCTION, self.NUMBER)
+        assert frame[2] == CMD_GET
+        assert frame[4] == self.FUNCTION
+        assert frame[5] == 0x00        # NUM_HI
+        assert frame[6] == 0x13        # NUM_LO = 19
+        assert frame[-1] == _checksum(frame[:-1])
+
+
+class TestGaanSlapenGenmood2:
+    """GENMOOD 2 — Gaan Slapen (bedtime mood)."""
+
+    FUNCTION = FunctionCode.GENMOOD
+    NUMBER = 2
+
+    def test_event_on(self):
+        frame = _make_event_frame(self.FUNCTION, self.NUMBER, STATE_ON)
+        c = _client()
+        event, consumed = c._parse_frame(bytearray(frame))
+        assert consumed == len(frame)
+        assert event is not None
+        assert event.function == self.FUNCTION
+        assert event.number == self.NUMBER
+        assert event.state == {"state": "ON"}
+
+    def test_event_off(self):
+        frame = _make_event_frame(self.FUNCTION, self.NUMBER, STATE_OFF)
+        c = _client()
+        event, _ = c._parse_frame(bytearray(frame))
+        assert event is not None
+        assert event.state == {"state": "OFF"}
+
+    def test_picos_push_on(self):
+        frame = _make_push_frame(self.FUNCTION, self.NUMBER, STATE_ON)
+        c = _client()
+        event, consumed = c._parse_frame(bytearray(frame))
+        assert consumed == len(frame)
+        assert event is not None
+        assert event.state == {"state": "ON"}
+
+    def test_set_on_bytes(self):
+        frame = _client()._build_set(self.FUNCTION, self.NUMBER, STATE_ON)
+        assert frame[2] == CMD_SET
+        assert frame[4] == self.FUNCTION
+        assert frame[6] == self.NUMBER  # NUM_LO = 2
+        assert frame[7] == STATE_ON
+        assert frame[-1] == _checksum(frame[:-1])
+
+
+class TestFlagAstro5:
+    """FLAG 5 — Flag Astro."""
+
+    FUNCTION = FunctionCode.FLAG
+    NUMBER = 5
+
+    def test_event_on(self):
+        frame = _make_event_frame(self.FUNCTION, self.NUMBER, STATE_ON)
+        c = _client()
+        event, consumed = c._parse_frame(bytearray(frame))
+        assert consumed == len(frame)
+        assert event is not None
+        assert event.function == self.FUNCTION
+        assert event.number == self.NUMBER
+        assert event.state == {"state": "ON"}
+
+    def test_event_off(self):
+        frame = _make_event_frame(self.FUNCTION, self.NUMBER, STATE_OFF)
+        c = _client()
+        event, _ = c._parse_frame(bytearray(frame))
+        assert event is not None
+        assert event.state == {"state": "OFF"}
+
+    def test_picos_push_on(self):
+        frame = _make_push_frame(self.FUNCTION, self.NUMBER, STATE_ON)
+        c = _client()
+        event, consumed = c._parse_frame(bytearray(frame))
+        assert consumed == len(frame)
+        assert event is not None
+        assert event.state == {"state": "ON"}
+
+    def test_picos_push_off(self):
+        frame = _make_push_frame(self.FUNCTION, self.NUMBER, STATE_OFF)
+        c = _client()
+        event, _ = c._parse_frame(bytearray(frame))
+        assert event is not None
+        assert event.state == {"state": "OFF"}
+
+    def test_set_on_bytes(self):
+        frame = _client()._build_set(self.FUNCTION, self.NUMBER, STATE_ON)
+        assert frame[2] == CMD_SET
+        assert frame[4] == self.FUNCTION
+        assert frame[6] == self.NUMBER  # NUM_LO = 5
+        assert frame[7] == STATE_ON
+        assert frame[-1] == _checksum(frame[:-1])
+
+    def test_log_subscribe_frame(self):
+        """LOG for FLAG covers all flags — no component number in the frame."""
+        frame = _client()._build_log(self.FUNCTION)
+        assert frame[2] == CMD_LOG
+        assert frame[3] == self.FUNCTION
+        assert frame[4] == 0xFF         # subscribe-all marker
+        assert frame[-1] == _checksum(frame[:-1])
