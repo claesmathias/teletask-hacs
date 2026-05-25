@@ -18,6 +18,7 @@ from .hub import TeletaskHub
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [
+    Platform.BUTTON,
     Platform.LIGHT,
     Platform.SWITCH,
     Platform.COVER,
