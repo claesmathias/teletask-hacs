@@ -10,6 +10,8 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from homeassistant.helpers.entity import DeviceInfo
+
 from .client import FunctionCode
 from .const import DOMAIN
 from .hub import TeletaskHub
@@ -37,6 +39,8 @@ async def async_setup_entry(
 class TeletaskMomentaryButton(ButtonEntity):
     """A relay wired as a momentary dry-contact trigger."""
 
+    _attr_should_poll = False
+
     def __init__(self, hub: TeletaskHub, component: dict) -> None:
         self._hub = hub
         self._number = component["number"]
@@ -44,10 +48,15 @@ class TeletaskMomentaryButton(ButtonEntity):
         self._pulse_ms: int = int(raw.get("pulse_ms", DEFAULT_PULSE_MS))
 
         central_id = hub.central_id
-        self._attr_unique_id = (
-            f"teletask_{central_id}_{int(FunctionCode.RELAY)}_{self._number}"
-        )
+        fn = int(FunctionCode.RELAY)
+        self._attr_unique_id = f"teletask_{central_id}_{fn}_{self._number}"
         self._attr_name = component["description"]
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{central_id}_{fn}_{self._number}")},
+            name=component["description"],
+            manufacturer="Teletask",
+            model=component.get("function_name", "RELAY"),
+        )
 
     async def async_press(self) -> None:
         """Close the relay contact, wait pulse_ms, then open it again."""
