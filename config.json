@@ -2,55 +2,28 @@
   "type": "PICOS",
   "componentsTypes": {
     "RELAY": [
-      { "number": 1,  "description": "Garage",               "hatype": "light",  "area": "Garage" },
-      { "number": 2,  "description": "Storage Room",         "hatype": "light",  "area": "Storage Room" },
-      { "number": 3,  "description": "Laundry Room",         "hatype": "light",  "area": "Laundry Room" },
-      { "number": 4,  "description": "Kitchen Counter LED",  "hatype": "light",  "area": "Kitchen" },
-      { "number": 5,  "description": "Dining Table",         "hatype": "light",  "area": "Dining Room" },
-      { "number": 6,  "description": "Office Worktop",       "hatype": "light",  "area": "Office" },
-      { "number": 7,  "description": "Office",               "hatype": "light",  "area": "Office" },
-      { "number": 8,  "description": "Living Room Outlet",   "hatype": "switch", "area": "Living Room" },
-      { "number": 9,  "description": "Dining Area Outlet",   "hatype": "switch", "area": "Dining Room" },
-      { "number": 10, "description": "Walk-in Closet",       "hatype": "light",  "area": "Walk-in Closet" },
-      { "number": 11, "description": "Bedroom 2",            "hatype": "light",  "area": "Bedroom 2" },
-      { "number": 13, "description": "Stair Wall Light",     "hatype": "light",  "area": "Hallway" },
-      { "number": 15, "description": "Downstairs Restroom",  "hatype": "light",  "area": "Downstairs Restroom" },
-      { "number": 16, "description": "Garage Door",          "hatype": "button", "pulse_ms": 500, "area": "Garage" },
-      { "number": 17, "description": "Upper Storage Room",   "hatype": "light",  "area": "Storage Room" },
-      { "number": 18, "description": "Front Yard",           "hatype": "light",  "area": "Front Yard" },
-      { "number": 19, "description": "Boiler Room",          "hatype": "light",  "area": "Boiler Room" },
-      { "number": 20, "description": "Bathroom Sink",        "hatype": "light",  "area": "Bathroom" },
-      { "number": 21, "description": "Bathroom",             "hatype": "light",  "area": "Bathroom" },
-      { "number": 22, "description": "Alexa Spotlight",      "hatype": "light",  "area": "Living Room" },
-      { "number": 23, "description": "Patio Wall Light",     "hatype": "light",  "area": "Patio" },
-      { "number": 24, "description": "Front Door Wall Light","hatype": "light",  "area": "Front Yard" },
-      { "number": 25, "description": "Patio Outlet",         "hatype": "switch", "area": "Patio" },
-      { "number": 26, "description": "Garden Shed",          "hatype": "switch", "area": "Garden" }
+      { "number": 1, "description": "Living Room Light", "hatype": "light",  "area": "Living Room" },
+      { "number": 2, "description": "Bedroom Outlet",    "hatype": "switch", "area": "Bedroom" },
+      { "number": 3, "description": "Garage Door",       "hatype": "button", "pulse_ms": 500, "area": "Garage" }
     ],
     "DIMMER": [
-      { "number": 1, "description": "Living Room",      "hatype": "light", "area": "Living Room" },
-      { "number": 2, "description": "Kitchen Island",   "hatype": "light", "area": "Kitchen" },
-      { "number": 3, "description": "Night Hallway",    "hatype": "light", "area": "Hallway" },
-      { "number": 4, "description": "Master Bedroom",   "hatype": "light", "area": "Master Bedroom" },
-      { "number": 5, "description": "Upstairs Restroom","hatype": "light", "area": "Upstairs Restroom" },
-      { "number": 6, "description": "Entry Hall",       "hatype": "light", "area": "Entry Hall" },
-      { "number": 7, "description": "Bedroom 3",        "hatype": "light", "area": "Bedroom 3" }
+      { "number": 1, "description": "Living Room Dimmer", "hatype": "light", "area": "Living Room" }
     ],
     "SENSOR": [
       {
-        "number": 19,
-        "description": "Temperature Sensor",
+        "number": 1,
+        "description": "Living Room Temperature",
         "type": "TEMPERATURE",
         "decimals": "1",
-        "ha_unit_of_measurement": "°C"
+        "ha_unit_of_measurement": "°C",
+        "area": "Living Room"
       }
     ],
     "GENMOOD": [
-      { "number": 2, "description": "Bedtime", "hatype": "scene" }
+      { "number": 1, "description": "Bedtime", "hatype": "scene", "area": "Living Room" }
     ],
     "FLAG": [
-      { "number": 4, "description": "Spotlight",         "hatype": "input_boolean" },
-      { "number": 5, "description": "Astro Timer Flag",  "hatype": "input_boolean" }
+      { "number": 1, "description": "Astro Timer Flag", "hatype": "input_boolean", "area": "Garage" }
     ]
   }
 }
