@@ -7,6 +7,7 @@ from typing import Any
 from homeassistant.components.scene import Scene
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .client import FunctionCode
@@ -51,6 +52,15 @@ class TeletaskScene(Scene):
 
         self._attr_unique_id = f"teletask_{central_id}_{self._function}_{self._number}"
         self._attr_name = description
+        device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{central_id}_{self._function}_{self._number}")},
+            name=description,
+            manufacturer="Teletask",
+            model=component.get("function_name", "Component"),
+        )
+        if area := component.get("area"):
+            device_info["suggested_area"] = area
+        self._attr_device_info = device_info
 
     async def async_activate(self, **kwargs: Any) -> None:
         """Activate the scene (turn on the mood/timed function)."""

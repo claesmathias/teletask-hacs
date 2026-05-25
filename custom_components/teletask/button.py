@@ -51,12 +51,15 @@ class TeletaskMomentaryButton(ButtonEntity):
         fn = int(FunctionCode.RELAY)
         self._attr_unique_id = f"teletask_{central_id}_{fn}_{self._number}"
         self._attr_name = component["description"]
-        self._attr_device_info = DeviceInfo(
+        device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{central_id}_{fn}_{self._number}")},
             name=component["description"],
             manufacturer="Teletask",
             model=component.get("function_name", "RELAY"),
         )
+        if area := component.get("area"):
+            device_info["suggested_area"] = area
+        self._attr_device_info = device_info
 
     async def async_press(self) -> None:
         """Close the relay contact, wait pulse_ms, then open it again."""
