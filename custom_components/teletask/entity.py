@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 
+from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import Entity
 
@@ -62,6 +63,7 @@ class TeletaskEntity(Entity):
         # always reflects reality regardless of hub-cache timing at startup.
         await self._hub.async_request_state(self._function, self._number)
 
+    @callback
     def _handle_state_update(self, state: dict) -> None:
         prev = self._state_dict
         self._state_dict = state
