@@ -92,6 +92,7 @@ class TeletaskHub:
                     "description":   comp.get("description", f"{type_name} {number}"),
                     "type":          comp.get("type"),
                     "ha_type":       comp.get("hatype"),
+                    "area":          comp.get("area"),
                     "config":        comp,
                 }
                 self._component_states[key] = {}

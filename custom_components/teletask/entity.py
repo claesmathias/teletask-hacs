@@ -32,12 +32,15 @@ class TeletaskEntity(Entity):
 
         self._attr_unique_id = f"teletask_{central_id}_{fn}_{num}"
         self._attr_name = self._description
-        self._attr_device_info = {
+        device_info = {
             "identifiers": {(DOMAIN, f"{central_id}_{fn}_{num}")},
             "name": self._description,
             "manufacturer": "Teletask",
             "model": component.get("function_name", "Component"),
         }
+        if area := component.get("area"):
+            device_info["suggested_area"] = area
+        self._attr_device_info = device_info
 
     async def async_added_to_hass(self) -> None:
         signal = SIGNAL_STATE_UPDATED.format(
