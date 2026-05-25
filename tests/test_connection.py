@@ -69,7 +69,8 @@ async def _wait_for_event(
                 received.set_result(event)
 
     client._event_callback = _cb
-    await client.subscribe(function, number)
+    await client.log_subscribe(function)
+    await client.groupget(function, number)
     result = await asyncio.wait_for(received, timeout=timeout)
     # Let any delayed LOG-welcome events drain with this callback before the caller
     # replaces it — prevents spurious captures in subsequent _set_and_wait calls.
@@ -137,7 +138,8 @@ async def test_get_state_receives_event(relay_number):
     client = _make_client()
     await client.connect()
     try:
-        await client.subscribe(FunctionCode.RELAY, relay_number)
+        await client.log_subscribe(FunctionCode.RELAY)
+        await client.groupget(FunctionCode.RELAY, relay_number)
         await asyncio.sleep(0.1)
 
         received: asyncio.Future[TeletaskEvent] = asyncio.get_running_loop().create_future()
@@ -198,7 +200,8 @@ async def test_keep_alive_prevents_timeout(relay_number):
     client = _make_client()
     await client.connect()
     try:
-        await client.subscribe(FunctionCode.RELAY, relay_number)
+        await client.log_subscribe(FunctionCode.RELAY)
+        await client.groupget(FunctionCode.RELAY, relay_number)
         # Wait 35 seconds — the keep-alive (20s interval) must fire before the
         # central's ~30s idle timeout closes the connection.
         await asyncio.sleep(35)
@@ -224,8 +227,9 @@ async def test_all_config_relays_subscribe(teletask_config):
     client = _make_client(on_event=events.append)
     await client.connect()
     try:
+        await client.log_subscribe(FunctionCode.RELAY)
         for comp in relays:
-            await client.subscribe(FunctionCode.RELAY, comp["number"])
+            await client.groupget(FunctionCode.RELAY, comp["number"])
             await asyncio.sleep(0.05)
 
         # Give the central time to reply to all subscriptions.

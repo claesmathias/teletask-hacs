@@ -1,11 +1,15 @@
 """Base entity for Teletask."""
 from __future__ import annotations
 
+import logging
+
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import Entity
 
 from .const import DOMAIN, SIGNAL_STATE_UPDATED
 from .hub import TeletaskHub
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class TeletaskEntity(Entity):
@@ -45,7 +49,12 @@ class TeletaskEntity(Entity):
         )
         # Apply whatever the hub already has cached, overriding any state HA
         # may have restored from a previous session.
-        self._state_dict = self._hub.get_state(self._function, self._number)
+        cached = self._hub.get_state(self._function, self._number)
+        _LOGGER.debug(
+            "ENTITY INIT   %s  fn=%d num=%d  hub_cache=%s",
+            self._description, self._function, self._number, cached,
+        )
+        self._state_dict = cached
         self.async_write_ha_state()
         # Ask the central for the actual current state.  The CMD=0x10 response
         # arrives asynchronously via _on_event → dispatcher signal →
@@ -54,5 +63,10 @@ class TeletaskEntity(Entity):
         await self._hub.async_request_state(self._function, self._number)
 
     def _handle_state_update(self, state: dict) -> None:
+        prev = self._state_dict
         self._state_dict = state
+        _LOGGER.debug(
+            "ENTITY UPDATE %s  fn=%d num=%d  %s → %s",
+            self._description, self._function, self._number, prev, state,
+        )
         self.async_write_ha_state()

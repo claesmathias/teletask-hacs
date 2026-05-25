@@ -180,11 +180,47 @@ class TeletaskClient:
         checksum = sum(msg) & 0xFF
         return msg + bytes([checksum])
 
+    # ------------------------------------------------------------------
+    # Human-readable log helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _cmd_name(cmd: int) -> str:
+        return {
+            CMD_SET: "SET", CMD_GET: "GET", CMD_LOG: "LOG",
+            CMD_GROUPGET: "GROUPGET", CMD_KEEP_ALIVE: "KEEP_ALIVE",
+            CMD_EVENT: "EVENT", CMD_ACK: "ACK",
+        }.get(cmd, f"0x{cmd:02X}")
+
+    @staticmethod
+    def _fn_name(fn: int) -> str:
+        try:
+            return FunctionCode(fn).name
+        except ValueError:
+            return f"fn={fn}"
+
+    def _describe_tx(self, data: bytes) -> str:
+        if len(data) < 3:
+            return data.hex(" ")
+        cmd = data[2]
+        name = self._cmd_name(cmd)
+        if cmd == CMD_KEEP_ALIVE:
+            return f"{name}"
+        if cmd in (CMD_SET, CMD_GET, CMD_GROUPGET) and len(data) >= 8:
+            fn  = data[4]
+            num = (data[5] << 8) | data[6]
+            extra = f" state=0x{data[7]:02X}" if cmd == CMD_SET and len(data) >= 9 else ""
+            return f"{name} {self._fn_name(fn)}/{num}{extra}"
+        if cmd == CMD_LOG and len(data) >= 5:
+            fn = data[3]
+            return f"{name} {self._fn_name(fn)}"
+        return f"{name} {data.hex(' ')}"
+
     async def _send(self, data: bytes) -> None:
         if not self._connected or self._writer is None:
             _LOGGER.warning("Cannot send: not connected")
             return
-        _LOGGER.debug("TX: %s", data.hex(" "))
+        _LOGGER.debug("TX %-10s  raw: %s", self._describe_tx(data), data.hex(" "))
         try:
             self._writer.write(data)
             await self._writer.drain()
@@ -204,12 +240,11 @@ class TeletaskClient:
                 if not data:
                     _LOGGER.warning("Teletask central closed the connection")
                     break
-                _LOGGER.debug("RX: %s", data.hex(" "))
+                _LOGGER.debug("RX raw (%d bytes): %s", len(data), data.hex(" "))
                 buffer.extend(data)
                 while buffer:
-                    # Single ACK byte from central — acknowledges a valid frame was received.
                     if buffer[0] == CMD_ACK:
-                        _LOGGER.debug("RX: ACK (0x0A)")
+                        _LOGGER.debug("RX ACK")
                         buffer = buffer[1:]
                         continue
                     event, consumed = self._parse_frame(buffer)
@@ -217,6 +252,12 @@ class TeletaskClient:
                         break
                     buffer = buffer[consumed:]
                     if event is not None:
+                        _LOGGER.debug(
+                            "RX EVENT  %-8s #%-3d  state=%s",
+                            self._fn_name(event.function),
+                            event.number,
+                            event.state,
+                        )
                         try:
                             self._event_callback(event)
                         except Exception as exc:
@@ -244,6 +285,7 @@ class TeletaskClient:
         if buf[0] != TELETASK_STX:
             try:
                 idx = buf.index(TELETASK_STX, 1)
+                _LOGGER.debug("Skipping %d non-STX bytes in buffer", idx)
                 return None, idx
             except ValueError:
                 return None, len(buf)
@@ -257,10 +299,16 @@ class TeletaskClient:
         frame = buf[:total]
         expected_cs = sum(frame[:-1]) & 0xFF
         if frame[-1] != expected_cs:
-            _LOGGER.debug("Checksum mismatch, skipping byte")
+            _LOGGER.warning(
+                "Checksum mismatch in frame %s (expected 0x%02X got 0x%02X), skipping byte",
+                frame.hex(" "), expected_cs, frame[-1],
+            )
             return None, 1
 
         event = self._decode_frame(frame)
+        if event is None and len(frame) >= 3:
+            _LOGGER.debug("Ignored frame cmd=0x%02X (%s): %s",
+                          frame[2], self._cmd_name(frame[2]), frame.hex(" "))
         return event, total
 
     def _decode_frame(self, frame: bytes) -> TeletaskEvent | None:

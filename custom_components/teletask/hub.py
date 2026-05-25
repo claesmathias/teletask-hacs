@@ -101,20 +101,28 @@ class TeletaskHub:
     # ------------------------------------------------------------------
 
     async def _subscribe_all(self) -> None:
+        _LOGGER.debug(
+            "Subscribing %d components across %d function types",
+            len(self._components),
+            len({fn for fn, _ in self._components}),
+        )
         # Step 1: Subscribe per function type (LOG covers all components of that type).
         # The central also sends a "welcome" event with current state for each component.
         seen: set[int] = set()
         for fn, _ in self._components:
             if fn not in seen:
+                _LOGGER.debug("LOG subscribe fn=%d", fn)
                 await self._client.log_subscribe(fn)
                 seen.add(fn)
                 await asyncio.sleep(0.02)
         # Step 2: GROUPGET per component to guarantee an immediate state reply.
         for fn, number in self._components:
+            _LOGGER.debug("GROUPGET fn=%d num=%d", fn, number)
             await self._client.groupget(fn, number)
             await asyncio.sleep(0.02)
-        # Give the central time to deliver all replies before entities read hub state.
+        _LOGGER.debug("Waiting for central to deliver all subscription replies…")
         await asyncio.sleep(1.5)
+        _LOGGER.debug("Subscription complete. Cached states: %s", self._component_states)
 
     # ------------------------------------------------------------------
     # Event / disconnect callbacks (called from client)
@@ -123,7 +131,18 @@ class TeletaskHub:
     @callback
     def _on_event(self, event: TeletaskEvent) -> None:
         key = (event.function, event.number)
+        prev = self._component_states.get(key)
         self._component_states[key] = event.state
+        if prev != event.state:
+            _LOGGER.debug(
+                "STATE CHANGE  fn=%d num=%d  %s → %s",
+                event.function, event.number, prev, event.state,
+            )
+        else:
+            _LOGGER.debug(
+                "STATE SAME    fn=%d num=%d  %s (no change)",
+                event.function, event.number, event.state,
+            )
         signal = SIGNAL_STATE_UPDATED.format(
             central_id=self.central_id,
             function=event.function,
@@ -148,6 +167,11 @@ class TeletaskHub:
         (CMD=0x06) only go to OTHER subscribed clients.  We update state
         optimistically so HA reflects the change without waiting for a push.
         """
+        prev = self._component_states.get((function, number))
+        _LOGGER.debug(
+            "OPTIMISTIC    fn=%d num=%d  %s → %s",
+            function, number, prev, state,
+        )
         key = (function, number)
         self._component_states[key] = state
         signal = SIGNAL_STATE_UPDATED.format(
