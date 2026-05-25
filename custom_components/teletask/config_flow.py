@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+import socket
 from typing import Any
 
 import voluptuous as vol
@@ -71,8 +72,10 @@ class TeletaskConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            ok = await _async_test_connection(user_input[CONF_HOST], user_input[CONF_PORT])
-            if not ok:
+            result = await _async_test_connection(user_input[CONF_HOST], user_input[CONF_PORT])
+            if result == "cannot_resolve":
+                errors["base"] = "cannot_resolve"
+            elif result != "ok":
                 errors["base"] = "cannot_connect"
             else:
                 self._connection_data = user_input
@@ -198,14 +201,21 @@ class TeletaskOptionsFlow(config_entries.OptionsFlow):
 # Shared helpers (module-level, not inside a class)
 # ------------------------------------------------------------------
 
-async def _async_test_connection(host: str, port: int) -> bool:
-    """Test TCP reachability without blocking the event loop."""
+async def _async_test_connection(host: str, port: int) -> str:
+    """Test TCP reachability. Returns 'ok', 'cannot_resolve', or 'cannot_connect'."""
+    loop = asyncio.get_event_loop()
+    # Resolve hostname explicitly first so we can give a specific DNS error.
+    try:
+        await loop.run_in_executor(None, socket.getaddrinfo, host, port)
+    except socket.gaierror:
+        _LOGGER.warning("DNS resolution failed for %s", host)
+        return "cannot_resolve"
     try:
         _, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port), timeout=5
+            asyncio.open_connection(host, port), timeout=10
         )
         writer.close()
         await writer.wait_closed()
-        return True
+        return "ok"
     except (OSError, asyncio.TimeoutError):
-        return False
+        return "cannot_connect"

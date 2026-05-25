@@ -27,6 +27,7 @@
       }
     },
     "error": {
+      "cannot_resolve": "Hostname could not be resolved. Check that the hostname is correct and your DNS is working.",
       "cannot_connect": "Cannot connect to the Teletask central unit. Check the hostname or IP address and port.",
       "file_not_found": "File not found. Make sure the path is correct and the file exists.",
       "invalid_json": "The file does not contain valid JSON. Please check the file content.",
