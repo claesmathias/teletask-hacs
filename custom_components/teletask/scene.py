@@ -48,6 +48,7 @@ class TeletaskScene(Scene):
         self._component = component
         self._function = component["function"]
         self._number = component["number"]
+        self._mood_state: str = "unknown"
         description = component["description"]
         central_id = hub.central_id
 
@@ -62,6 +63,10 @@ class TeletaskScene(Scene):
         if area := component.get("area"):
             device_info["suggested_area"] = area
         self._attr_device_info = device_info
+
+    @property
+    def state(self) -> str:
+        return self._mood_state
 
     _FN_NAMES = {
         FunctionCode.LOCMOOD:   "LOCMOOD",
@@ -79,18 +84,26 @@ class TeletaskScene(Scene):
         self.async_on_remove(
             async_dispatcher_connect(self.hass, signal, self._handle_state_update)
         )
+        # Seed state from hub cache so history starts correctly on restart.
+        cached = self._hub.get_state(self._function, self._number)
+        if cached:
+            self._mood_state = cached.get("state", "unknown")
+        self.async_write_ha_state()
 
     @callback
     def _handle_state_update(self, state: dict) -> None:
+        new_state = state.get("state", "unknown")
         _LOGGER.debug(
-            "SCENE EVENT  %s fn=%d num=%d  state=%s",
-            self._attr_name, self._function, self._number, state,
+            "SCENE EVENT  %s fn=%d num=%d  %s → %s",
+            self._attr_name, self._function, self._number, self._mood_state, new_state,
         )
+        self._mood_state = new_state
+        self.async_write_ha_state()
         self.hass.bus.async_fire(TELETASK_EVENT, {
             "function": self._FN_NAMES.get(self._function, str(self._function)),
             "number": self._number,
             "description": self._attr_name,
-            "state": state.get("state"),
+            "state": new_state,
         })
 
     async def async_activate(self, **kwargs: Any) -> None:
