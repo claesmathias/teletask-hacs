@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import dt as dt_util
 
 from .client import FunctionCode
 from .const import DOMAIN, SIGNAL_STATE_UPDATED, TELETASK_EVENT
@@ -78,6 +79,8 @@ class TeletaskMomentaryButton(ButtonEntity):
                 "BUTTON EVENT  %s relay=%d  externally triggered",
                 self._attr_name, self._number,
             )
+            self._attr_state = dt_util.utcnow().isoformat()
+            self.async_write_ha_state()
             self.hass.bus.async_fire(TELETASK_EVENT, {
                 "function": "RELAY",
                 "number": self._number,
