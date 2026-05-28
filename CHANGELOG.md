@@ -1,5 +1,42 @@
 # Changelog
 
+## [1.3.0] — 2026-05-28
+
+### Fixed
+- **Physical button/scene activations not visible in HA** — `TeletaskMomentaryButton`
+  and `TeletaskScene` were not subscribing to dispatcher signals, so state changes
+  triggered from the physical TeleTask panel were silently dropped. Both entities
+  now subscribe via `async_added_to_hass` and update the HA state machine.
+- **Scene entity history blank** — overrode `state` to return the live mood state
+  (`ON`/`OFF`) and call `async_write_ha_state()` on every push event so transitions
+  are recorded in HA's history panel.
+- **Button entity last-pressed time not updating** — set `_attr_state` to the UTC
+  timestamp on external relay triggers (same mechanism HA uses internally), making
+  physical activations visible in the entity history.
+
+### Added
+- `teletask_event` HA bus event fired on every physical activation of a scene or
+  button. Payload: `{function, number, description, state}`. Use in automations via
+  `trigger: platform: event / event_type: teletask_event`.
+- 47 new unit tests: protocol coverage for TIMEDMOOD, TIMEDFNC, LOCMOOD/COND
+  polarity gaps, and a full `TestWatchTvLocmood4` component class; plus 33 entity
+  tests for `TeletaskScene` and `TeletaskMomentaryButton` that run without a live
+  HA installation.
+
+## [1.1.0] — 2026-05-27
+
+### Added
+- **Area support** — components now accept an `area` field in `config.json`;
+  the value is passed as `suggested_area` in `DeviceInfo` so HA auto-assigns
+  the entity to the correct room.
+- **Button entity** — RELAY components with `hatype: button` are now exposed as
+  `ButtonEntity` for momentary dry-contact triggers (e.g. garage doors).
+  A `pulse_ms` field controls the ON→OFF pulse duration (default 500 ms).
+
+### Fixed
+- Scene and button entities were missing `DeviceInfo` (manufacturer, model, area),
+  causing them to appear as orphan entities not linked to a device.
+
 ## [1.0.1] — 2026-05-24
 
 ### Fixed
