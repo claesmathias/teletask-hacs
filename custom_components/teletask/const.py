@@ -12,3 +12,8 @@ DEFAULT_PORT = 55957
 
 # Dispatcher signal format
 SIGNAL_STATE_UPDATED = "teletask_{central_id}_{function}_{number}_state"
+
+# HA bus event fired when the TeleTask central reports a state change
+# for entity types that have no writable HA state (scenes, momentary buttons).
+# Payload: {"function": str, "number": int, "description": str, "state": str}
+TELETASK_EVENT = "teletask_event"

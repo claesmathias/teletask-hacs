@@ -6,12 +6,13 @@ from typing import Any
 
 from homeassistant.components.scene import Scene
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .client import FunctionCode
-from .const import DOMAIN
+from .const import DOMAIN, SIGNAL_STATE_UPDATED, TELETASK_EVENT
 from .hub import TeletaskHub
 
 _LOGGER = logging.getLogger(__name__)
@@ -61,6 +62,36 @@ class TeletaskScene(Scene):
         if area := component.get("area"):
             device_info["suggested_area"] = area
         self._attr_device_info = device_info
+
+    _FN_NAMES = {
+        FunctionCode.LOCMOOD:   "LOCMOOD",
+        FunctionCode.GENMOOD:   "GENMOOD",
+        FunctionCode.TIMEDMOOD: "TIMEDMOOD",
+        FunctionCode.TIMEDFNC:  "TIMEDFNC",
+    }
+
+    async def async_added_to_hass(self) -> None:
+        signal = SIGNAL_STATE_UPDATED.format(
+            central_id=self._hub.central_id,
+            function=self._function,
+            number=self._number,
+        )
+        self.async_on_remove(
+            async_dispatcher_connect(self.hass, signal, self._handle_state_update)
+        )
+
+    @callback
+    def _handle_state_update(self, state: dict) -> None:
+        _LOGGER.debug(
+            "SCENE EVENT  %s fn=%d num=%d  state=%s",
+            self._attr_name, self._function, self._number, state,
+        )
+        self.hass.bus.async_fire(TELETASK_EVENT, {
+            "function": self._FN_NAMES.get(self._function, str(self._function)),
+            "number": self._number,
+            "description": self._attr_name,
+            "state": state.get("state"),
+        })
 
     async def async_activate(self, **kwargs: Any) -> None:
         """Activate the scene (turn on the mood/timed function)."""

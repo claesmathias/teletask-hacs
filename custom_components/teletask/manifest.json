@@ -6,7 +6,7 @@
   "requirements": [],
   "dependencies": [],
   "codeowners": ["@claesmathias"],
-  "version": "1.1.0",
+  "version": "1.2.0",
   "iot_class": "local_push",
   "config_flow": true
 }

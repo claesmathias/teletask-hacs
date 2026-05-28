@@ -7,13 +7,13 @@ from typing import Any
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from homeassistant.helpers.entity import DeviceInfo
-
 from .client import FunctionCode
-from .const import DOMAIN
+from .const import DOMAIN, SIGNAL_STATE_UPDATED, TELETASK_EVENT
 from .hub import TeletaskHub
 
 _LOGGER = logging.getLogger(__name__)
@@ -60,6 +60,30 @@ class TeletaskMomentaryButton(ButtonEntity):
         if area := component.get("area"):
             device_info["suggested_area"] = area
         self._attr_device_info = device_info
+
+    async def async_added_to_hass(self) -> None:
+        signal = SIGNAL_STATE_UPDATED.format(
+            central_id=self._hub.central_id,
+            function=int(FunctionCode.RELAY),
+            number=self._number,
+        )
+        self.async_on_remove(
+            async_dispatcher_connect(self.hass, signal, self._handle_state_update)
+        )
+
+    @callback
+    def _handle_state_update(self, state: dict) -> None:
+        if state.get("state") == "ON":
+            _LOGGER.debug(
+                "BUTTON EVENT  %s relay=%d  externally triggered",
+                self._attr_name, self._number,
+            )
+            self.hass.bus.async_fire(TELETASK_EVENT, {
+                "function": "RELAY",
+                "number": self._number,
+                "description": self._attr_name,
+                "state": "ON",
+            })
 
     async def async_press(self) -> None:
         """Close the relay contact, wait pulse_ms, then open it again."""

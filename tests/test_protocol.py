@@ -371,11 +371,35 @@ class TestDecodeState:
     def test_locmood_on(self):
         assert self._decode(FunctionCode.LOCMOOD, STATE_ON) == {"state": "ON"}
 
+    def test_locmood_off(self):
+        assert self._decode(FunctionCode.LOCMOOD, STATE_OFF) == {"state": "OFF"}
+
+    def test_genmood_on(self):
+        assert self._decode(FunctionCode.GENMOOD, STATE_ON) == {"state": "ON"}
+
     def test_genmood_off(self):
         assert self._decode(FunctionCode.GENMOOD, STATE_OFF) == {"state": "OFF"}
 
+    def test_timedmood_on(self):
+        assert self._decode(FunctionCode.TIMEDMOOD, STATE_ON) == {"state": "ON"}
+
+    def test_timedmood_off(self):
+        assert self._decode(FunctionCode.TIMEDMOOD, STATE_OFF) == {"state": "OFF"}
+
+    def test_timedfnc_on(self):
+        assert self._decode(FunctionCode.TIMEDFNC, STATE_ON) == {"state": "ON"}
+
+    def test_timedfnc_off(self):
+        assert self._decode(FunctionCode.TIMEDFNC, STATE_OFF) == {"state": "OFF"}
+
     def test_flag_on(self):
         assert self._decode(FunctionCode.FLAG, STATE_ON) == {"state": "ON"}
+
+    def test_flag_off(self):
+        assert self._decode(FunctionCode.FLAG, STATE_OFF) == {"state": "OFF"}
+
+    def test_cond_on(self):
+        assert self._decode(FunctionCode.COND, STATE_ON) == {"state": "ON"}
 
     def test_cond_off(self):
         assert self._decode(FunctionCode.COND, STATE_OFF) == {"state": "OFF"}
@@ -433,15 +457,17 @@ class TestConstants:
         assert STATE_OFF == 0
 
     def test_function_codes(self):
-        assert FunctionCode.RELAY    == 1
-        assert FunctionCode.DIMMER   == 2
-        assert FunctionCode.MOTOR    == 6
-        assert FunctionCode.LOCMOOD  == 8
+        assert FunctionCode.RELAY     == 1
+        assert FunctionCode.DIMMER    == 2
+        assert FunctionCode.MOTOR     == 6
+        assert FunctionCode.LOCMOOD   == 8
         assert FunctionCode.TIMEDMOOD == 9
-        assert FunctionCode.GENMOOD  == 10
-        assert FunctionCode.FLAG     == 15
-        assert FunctionCode.SENSOR   == 20
-        assert FunctionCode.COND     == 60
+        assert FunctionCode.GENMOOD   == 10
+        assert FunctionCode.FLAG      == 15
+        assert FunctionCode.SENSOR    == 20
+        assert FunctionCode.COND      == 60
+        assert FunctionCode.INPUT     == 62
+        assert FunctionCode.TIMEDFNC  == 52
 
 
 # ---------------------------------------------------------------------------
@@ -692,4 +718,58 @@ class TestFlagAstro5:
         assert frame[2] == CMD_LOG
         assert frame[3] == self.FUNCTION
         assert frame[4] == 0xFF         # subscribe-all marker
+        assert frame[-1] == _checksum(frame[:-1])
+
+
+class TestWatchTvLocmood4:
+    """LOCMOOD 4 — Watch Tv (local mood from config.json)."""
+
+    FUNCTION = FunctionCode.LOCMOOD
+    NUMBER = 4
+
+    def test_event_on(self):
+        frame = _make_event_frame(self.FUNCTION, self.NUMBER, STATE_ON)
+        c = _client()
+        event, consumed = c._parse_frame(bytearray(frame))
+        assert consumed == len(frame)
+        assert event is not None
+        assert event.function == self.FUNCTION
+        assert event.number == self.NUMBER
+        assert event.state == {"state": "ON"}
+
+    def test_event_off(self):
+        frame = _make_event_frame(self.FUNCTION, self.NUMBER, STATE_OFF)
+        c = _client()
+        event, _ = c._parse_frame(bytearray(frame))
+        assert event is not None
+        assert event.state == {"state": "OFF"}
+
+    def test_picos_push_on(self):
+        frame = _make_push_frame(self.FUNCTION, self.NUMBER, STATE_ON)
+        c = _client()
+        event, consumed = c._parse_frame(bytearray(frame))
+        assert consumed == len(frame)
+        assert event is not None
+        assert event.state == {"state": "ON"}
+
+    def test_picos_push_off(self):
+        frame = _make_push_frame(self.FUNCTION, self.NUMBER, STATE_OFF)
+        c = _client()
+        event, _ = c._parse_frame(bytearray(frame))
+        assert event is not None
+        assert event.state == {"state": "OFF"}
+
+    def test_set_on_bytes(self):
+        frame = _client()._build_set(self.FUNCTION, self.NUMBER, STATE_ON)
+        assert frame[2] == CMD_SET
+        assert frame[4] == self.FUNCTION
+        assert frame[6] == self.NUMBER  # NUM_LO = 4
+        assert frame[7] == STATE_ON
+        assert frame[-1] == _checksum(frame[:-1])
+
+    def test_log_subscribe_frame(self):
+        frame = _client()._build_log(self.FUNCTION)
+        assert frame[2] == CMD_LOG
+        assert frame[3] == self.FUNCTION
+        assert frame[4] == 0xFF
         assert frame[-1] == _checksum(frame[:-1])
