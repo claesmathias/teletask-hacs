@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.4.0] — 2026-05-29
+
+### Changed
+- **`hatype: button` RELAY entities are now exposed as `switch` instead of `button`**
+  — `ButtonEntity` is stateless in HA and only records activity for UI-initiated presses,
+  not for physical Teletask panel presses. Changing to `SwitchEntity` (backed by the
+  same `TeletaskEntity` base as every other RELAY) means ON/OFF transitions appear in
+  the HA activity log identically to lights and switches.
+  **Migration:** update any dashboard cards or automations that reference `button.garage_door`
+  (or similar) to use `switch.garage_door`. The `teletask_event` bus event on physical
+  presses is preserved.
+
 ## [1.3.1] — 2026-05-29
 
 ### Fixed

@@ -1,18 +1,21 @@
 """Teletask switch platform — relays (switch type), flags, timed functions."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .client import FunctionCode
-from .const import DOMAIN
+from .const import DOMAIN, TELETASK_EVENT
 from .entity import TeletaskEntity
 from .hub import TeletaskHub
+
+DEFAULT_PULSE_MS = 500
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,6 +32,12 @@ async def async_setup_entry(
     for comp in hub.get_components_by_function(FunctionCode.RELAY):
         if comp.get("ha_type") == "switch":
             entities.append(TeletaskRelaySwitch(hub, comp))
+
+    # RELAY with hatype "button" — momentary pulse, exposed as a switch so that
+    # ON/OFF transitions appear in the HA activity log like every other RELAY.
+    for comp in hub.get_components_by_function(FunctionCode.RELAY):
+        if comp.get("ha_type") == "button":
+            entities.append(TeletaskMomentaryButton(hub, comp))
 
     # FLAG components (hatype "switch" or "input_boolean" both map to a switch entity)
     for comp in hub.get_components_by_function(FunctionCode.FLAG):
@@ -106,3 +115,41 @@ class TeletaskMoodSwitch(TeletaskEntity, SwitchEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self._hub.async_set_mood(self._function, self._number, False)
+
+
+class TeletaskMomentaryButton(TeletaskEntity, SwitchEntity):
+    """A relay wired as a momentary dry-contact trigger (hatype=button).
+
+    Exposed as a switch so ON/OFF transitions are written to the HA state machine
+    and appear in the activity log, identical to every other RELAY entity.
+    turn_on pulses the relay; turn_off is a no-op.
+    """
+
+    def __init__(self, hub: TeletaskHub, component: dict) -> None:
+        super().__init__(hub, component)
+        self._pulse_ms: int = int(
+            component.get("config", {}).get("pulse_ms", DEFAULT_PULSE_MS)
+        )
+
+    @property
+    def is_on(self) -> bool:
+        return self._state_dict.get("state") == "ON"
+
+    @callback
+    def _handle_state_update(self, state: dict) -> None:
+        super()._handle_state_update(state)
+        if state.get("state") == "ON":
+            self.hass.bus.async_fire(TELETASK_EVENT, {
+                "function": "RELAY",
+                "number": self._number,
+                "description": self._attr_name,
+                "state": "ON",
+            })
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self._hub.async_set_relay(self._number, True)
+        await asyncio.sleep(self._pulse_ms / 1000)
+        await self._hub.async_set_relay(self._number, False)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        pass

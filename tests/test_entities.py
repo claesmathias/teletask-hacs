@@ -13,9 +13,8 @@ import asyncio
 import importlib.util
 import sys
 import types
-from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -52,23 +51,13 @@ class _Scene(_Entity):
         return "scening"
 
 
-class _ButtonEntity(_Entity):
-    pass
-
-
-# Fixed timestamp for deterministic button tests.
-_FIXED_DT = datetime(2026, 5, 28, 12, 0, 0, tzinfo=timezone.utc)
-
 # Build module stubs.
 _mod_core = types.ModuleType("homeassistant.core")
 _mod_core.callback = _callback
 _mod_core.HomeAssistant = MagicMock
 
-_mod_dt = types.ModuleType("homeassistant.util.dt")
-_mod_dt.utcnow = staticmethod(lambda: _FIXED_DT)
-
 _mod_util = types.ModuleType("homeassistant.util")
-_mod_util.dt = _mod_dt
+_mod_util.dt = types.ModuleType("homeassistant.util.dt")
 
 _mod_entity = types.ModuleType("homeassistant.helpers.entity")
 _mod_entity.Entity = _Entity
@@ -81,8 +70,8 @@ _mod_dispatcher.async_dispatcher_send = MagicMock()
 _mod_scene_pkg = types.ModuleType("homeassistant.components.scene")
 _mod_scene_pkg.Scene = _Scene
 
-_mod_button_pkg = types.ModuleType("homeassistant.components.button")
-_mod_button_pkg.ButtonEntity = _ButtonEntity
+_mod_switch_pkg = types.ModuleType("homeassistant.components.switch")
+_mod_switch_pkg.SwitchEntity = _Entity
 
 _mod_config_entries = types.ModuleType("homeassistant.config_entries")
 _mod_config_entries.ConfigEntry = MagicMock
@@ -94,14 +83,14 @@ _HA_MOCKS = {
     "homeassistant":                         types.ModuleType("homeassistant"),
     "homeassistant.core":                    _mod_core,
     "homeassistant.util":                    _mod_util,
-    "homeassistant.util.dt":                 _mod_dt,
+    "homeassistant.util.dt":                 _mod_util.dt,
     "homeassistant.helpers":                 types.ModuleType("homeassistant.helpers"),
     "homeassistant.helpers.entity":          _mod_entity,
     "homeassistant.helpers.dispatcher":      _mod_dispatcher,
     "homeassistant.helpers.entity_platform": _mod_entity_platform,
     "homeassistant.components":              types.ModuleType("homeassistant.components"),
     "homeassistant.components.scene":        _mod_scene_pkg,
-    "homeassistant.components.button":       _mod_button_pkg,
+    "homeassistant.components.switch":       _mod_switch_pkg,
     "homeassistant.config_entries":          _mod_config_entries,
 }
 for _name, _mod in _HA_MOCKS.items():
@@ -130,14 +119,15 @@ def _load_teletask_module(stem: str):
 _client_mod = _load_teletask_module("client")
 _const_mod  = _load_teletask_module("const")
 _hub_mod    = _load_teletask_module("hub")
+_entity_mod = _load_teletask_module("entity")
 _scene_mod  = _load_teletask_module("scene")
-_button_mod = _load_teletask_module("button")
+_switch_mod = _load_teletask_module("switch")
 
-TeletaskScene          = _scene_mod.TeletaskScene
-TeletaskMomentaryButton = _button_mod.TeletaskMomentaryButton
-FunctionCode           = _client_mod.FunctionCode
-TELETASK_EVENT         = _const_mod.TELETASK_EVENT
-SIGNAL_STATE_UPDATED   = _const_mod.SIGNAL_STATE_UPDATED
+TeletaskScene           = _scene_mod.TeletaskScene
+TeletaskMomentaryButton = _switch_mod.TeletaskMomentaryButton
+FunctionCode            = _client_mod.FunctionCode
+TELETASK_EVENT          = _const_mod.TELETASK_EVENT
+SIGNAL_STATE_UPDATED    = _const_mod.SIGNAL_STATE_UPDATED
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +138,7 @@ def _make_hub(central_id: str = "1", cached_state: dict | None = None) -> MagicM
     hub = MagicMock()
     hub.central_id = central_id
     hub.get_state = MagicMock(return_value=cached_state if cached_state is not None else {})
+    hub.async_request_state = AsyncMock()
     return hub
 
 
@@ -331,29 +322,35 @@ class TestTeletaskSceneAddedToHass:
 # ---------------------------------------------------------------------------
 
 class TestTeletaskButtonState:
-    def test_initial_attr_state_is_none(self):
+    def test_initial_state_dict_is_empty(self):
         entity, _ = _make_button()
-        assert entity._attr_state is None
+        assert entity._state_dict == {}
 
-    def test_relay_on_sets_attr_state_to_timestamp(self):
+    def test_initial_is_on_false(self):
+        entity, _ = _make_button()
+        assert entity.is_on is False
+
+    def test_relay_on_sets_is_on_true(self):
         entity, _ = _make_button()
         entity._handle_state_update({"state": "ON"})
-        assert entity._attr_state == _FIXED_DT.isoformat()
+        assert entity.is_on is True
 
-    def test_relay_off_does_not_change_attr_state(self):
+    def test_relay_off_sets_is_on_false(self):
         entity, _ = _make_button()
+        entity._handle_state_update({"state": "ON"})
         entity._handle_state_update({"state": "OFF"})
-        assert entity._attr_state is None
+        assert entity.is_on is False
 
     def test_relay_on_calls_write_ha_state(self):
         entity, _ = _make_button()
         entity._handle_state_update({"state": "ON"})
         entity.async_write_ha_state.assert_called_once()
 
-    def test_relay_off_does_not_call_write_ha_state(self):
+    def test_relay_off_also_calls_write_ha_state(self):
+        """OFF transitions are written to HA state — same as any other RELAY."""
         entity, _ = _make_button()
         entity._handle_state_update({"state": "OFF"})
-        entity.async_write_ha_state.assert_not_called()
+        entity.async_write_ha_state.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -449,3 +446,26 @@ class TestTeletaskButtonAddedToHass:
         )
         connect_call = _mod_dispatcher.async_dispatcher_connect.call_args
         assert connect_call[0][1] == expected_signal
+
+    def test_seeds_state_from_hub_cache(self):
+        hub = _make_hub(cached_state={"state": "OFF"})
+        comp = {
+            "function": int(FunctionCode.RELAY),
+            "number": 16,
+            "description": "Garage Door",
+            "ha_type": "button",
+            "function_name": "RELAY",
+            "config": {},
+            "area": "Garage",
+        }
+        entity = TeletaskMomentaryButton(hub, comp)
+        entity.hass = MagicMock()
+        entity.async_write_ha_state = MagicMock()
+        entity.async_on_remove = MagicMock()
+        self._run(entity.async_added_to_hass())
+        assert entity._state_dict == {"state": "OFF"}
+
+    def test_calls_write_ha_state_on_init(self):
+        entity, _ = _make_button()
+        self._run(entity.async_added_to_hass())
+        entity.async_write_ha_state.assert_called()
