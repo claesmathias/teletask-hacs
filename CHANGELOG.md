@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.1] — 2026-05-29
+
+### Fixed
+- **Button activity not visible in HA logbook** — `_handle_state_update` was setting
+  `_attr_state` (ignored on `ButtonEntity`, which is stateless) instead of
+  `_attr_last_pressed`. External relay triggers now correctly update the
+  `last_pressed` timestamp, making physical activations visible in the HA activity log.
+
 ## [1.3.0] — 2026-05-28
 
 ### Fixed

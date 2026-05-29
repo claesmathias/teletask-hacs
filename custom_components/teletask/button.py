@@ -79,7 +79,7 @@ class TeletaskMomentaryButton(ButtonEntity):
                 "BUTTON EVENT  %s relay=%d  externally triggered",
                 self._attr_name, self._number,
             )
-            self._attr_state = dt_util.utcnow().isoformat()
+            self._attr_last_pressed = dt_util.utcnow()
             self.async_write_ha_state()
             self.hass.bus.async_fire(TELETASK_EVENT, {
                 "function": "RELAY",
