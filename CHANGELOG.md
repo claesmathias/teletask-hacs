@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.5.2] — 2026-05-30
+
+### Fixed
+- **Scene timestamp NaN errors persist when recorder has `"unknown"` state** — the 1.5.1 fix
+  only handled the case where the recorder held a valid ISO timestamp; when the stored state
+  was `"unknown"` (written by 1.5.0) or any other non-ISO string, `dt_util.parse_datetime`
+  returned `None` and `_attr_last_activated` stayed `None`, causing the same
+  `RangeError: number argument must be finite` on the next page load. The fallback chain is
+  now: ISO timestamp → `last_state.last_changed` → `dt_util.utcnow()`, ensuring
+  `_attr_last_activated` is always a valid datetime.
+
 ## [1.5.1] — 2026-05-30
 
 ### Fixed

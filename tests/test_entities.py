@@ -66,9 +66,11 @@ _mod_const = types.ModuleType("homeassistant.const")
 _mod_const.STATE_UNKNOWN = "unknown"
 _mod_const.STATE_UNAVAILABLE = "unavailable"
 
+from datetime import datetime, timezone as _tz
 _mod_util = types.ModuleType("homeassistant.util")
 _mod_util.dt = types.ModuleType("homeassistant.util.dt")
 _mod_util.dt.parse_datetime = MagicMock(return_value=None)
+_mod_util.dt.utcnow = MagicMock(return_value=datetime(2026, 1, 1, tzinfo=_tz.utc))
 
 _mod_entity = types.ModuleType("homeassistant.helpers.entity")
 _mod_entity.Entity = _Entity
@@ -277,6 +279,13 @@ class TestTeletaskSceneAddedToHass:
     def _run(self, coro):
         return asyncio.get_event_loop().run_until_complete(coro)
 
+    def _fake_state(self, state_str, last_changed=None):
+        from datetime import datetime, timezone
+        s = MagicMock()
+        s.state = state_str
+        s.last_changed = last_changed or datetime(2026, 1, 1, tzinfo=timezone.utc)
+        return s
+
     def test_calls_write_ha_state_on_added(self):
         entity, _ = _make_scene()
         self._run(entity.async_added_to_hass())
@@ -285,7 +294,6 @@ class TestTeletaskSceneAddedToHass:
     def test_registers_dispatcher_subscription(self):
         entity, hub = _make_scene()
         self._run(entity.async_added_to_hass())
-        # async_on_remove must be called with the unsubscribe callable from dispatcher
         entity.async_on_remove.assert_called_once()
 
     def test_signal_format(self):
@@ -299,6 +307,37 @@ class TestTeletaskSceneAddedToHass:
         )
         connect_call = _mod_dispatcher.async_dispatcher_connect.call_args
         assert connect_call[0][1] == expected_signal
+
+    def test_restores_iso_timestamp_from_recorder(self):
+        """A valid ISO timestamp in the recorder is used as last_activated."""
+        from datetime import datetime, timezone
+        ts = datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc)
+        _mod_util.dt.parse_datetime = MagicMock(return_value=ts)
+        entity, _ = _make_scene()
+        entity.async_get_last_state = AsyncMock(return_value=self._fake_state("2026-05-01T12:00:00+00:00"))
+        self._run(entity.async_added_to_hass())
+        assert entity._attr_last_activated == ts
+        _mod_util.dt.parse_datetime = MagicMock(return_value=None)  # restore
+
+    def test_falls_back_to_last_changed_when_state_is_unknown(self):
+        """When the stored state is 'unknown', last_changed is used instead."""
+        from datetime import datetime, timezone
+        fallback = datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc)
+        _mod_util.dt.parse_datetime = MagicMock(return_value=None)
+        entity, _ = _make_scene()
+        entity.async_get_last_state = AsyncMock(return_value=self._fake_state("unknown", last_changed=fallback))
+        self._run(entity.async_added_to_hass())
+        assert entity._attr_last_activated == fallback
+
+    def test_seeds_utcnow_when_no_previous_state(self):
+        """When the recorder has no entry, last_activated is seeded with utcnow."""
+        from datetime import datetime, timezone
+        now = datetime(2026, 5, 30, 18, 0, tzinfo=timezone.utc)
+        _mod_util.dt.utcnow = MagicMock(return_value=now)
+        entity, _ = _make_scene()
+        entity.async_get_last_state = AsyncMock(return_value=None)
+        self._run(entity.async_added_to_hass())
+        assert entity._attr_last_activated == now
 
 
 # ---------------------------------------------------------------------------
