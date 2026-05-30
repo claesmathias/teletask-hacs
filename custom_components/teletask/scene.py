@@ -54,10 +54,6 @@ class TeletaskScene(Scene):
 
         self._attr_unique_id = f"teletask_{central_id}_{self._function}_{self._number}"
         self._attr_name = description
-        # Seed a valid ISO timestamp so entity.state never returns "unknown".
-        # HA may call entity.state during registration (before async_added_to_hass),
-        # and hui-timestamp-display throws RangeError if it receives a non-date string.
-        self._attr_last_activated = dt_util.utcnow()
         device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{central_id}_{self._function}_{self._number}")},
             name=description,
@@ -76,12 +72,16 @@ class TeletaskScene(Scene):
     }
 
     async def async_added_to_hass(self) -> None:
-        # Write a valid ISO timestamp BEFORE the first yield point (await super).
-        # HA restores "unknown" from core.restore_state into the state machine
-        # when it registers the entity; the event loop can flush that WebSocket
-        # event during await super(), causing hui-timestamp-display to receive
-        # "unknown" and throw RangeError: number argument must be finite.
-        # Overwrite the stale entry synchronously before any yield.
+        # BaseScene.async_internal_added_to_hass() (already called by HA before this
+        # method) restores the last DB state into the private _BaseScene__last_activated.
+        # If that restored value is not a valid ISO datetime (e.g. 'OFF', 'unknown'),
+        # overwrite it now via _async_record_activation() so the state machine never
+        # holds a non-date string that would cause DateTimeFormat.format() to throw
+        # RangeError: date value is not finite in the HA frontend.
+        if not dt_util.parse_datetime(self.state or ""):
+            self._async_record_activation()
+        # Write the valid timestamp before any awaits so WebSocket subscribers
+        # see a finite date from the first state machine update.
         self.async_write_ha_state()
         await super().async_added_to_hass()
         signal = SIGNAL_STATE_UPDATED.format(
@@ -92,13 +92,6 @@ class TeletaskScene(Scene):
         self.async_on_remove(
             async_dispatcher_connect(self.hass, signal, self._handle_state_update)
         )
-        # Refine with the real last-activation time from the recorder.
-        if last_state := await self.async_get_last_state():
-            parsed = dt_util.parse_datetime(last_state.state)
-            refined = parsed or last_state.last_changed
-            if refined:
-                self._attr_last_activated = refined
-                self.async_write_ha_state()
 
     @callback
     def _handle_state_update(self, state: dict) -> None:
