@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.5.0] — 2026-05-30
+
+### Fixed
+- **Scene timestamps invalid in HA UI** — `TeletaskScene` was overriding HA's `@final BaseScene.state`
+  property (which returns the ISO datetime of the last activation) with `"ON"`/`"OFF"`/`"unknown"`,
+  breaking the timestamp display entirely. The override and `_mood_state` tracking are removed;
+  `_async_record_activation()` is now called on every incoming `ON` event so physical keypad
+  activations also update the timestamp correctly.
+- **README entity-naming examples corrected** — four wrong function-code numbers in the examples
+  table (`9 → GENMOOD`, missing GENMOOD entry, `FLAG = 12`, `COND = 63`).
+
 ## [1.4.0] — 2026-05-29
 
 ### Changed

@@ -50,6 +50,9 @@ class _Scene(_Entity):
     def state(self):
         return "scening"
 
+    def _async_record_activation(self):
+        pass
+
 
 # Build module stubs.
 _mod_core = types.ModuleType("homeassistant.core")
@@ -162,6 +165,7 @@ def _make_scene(
     entity.hass = MagicMock()
     entity.async_write_ha_state = MagicMock()
     entity.async_on_remove = MagicMock()
+    entity._async_record_activation = MagicMock()
     return entity, hub
 
 
@@ -188,30 +192,20 @@ def _make_button(number: int = 16, pulse_ms: int = 500) -> tuple[TeletaskMomenta
 # ---------------------------------------------------------------------------
 
 class TestTeletaskSceneState:
-    def test_initial_mood_state_is_unknown(self):
-        entity, _ = _make_scene()
-        assert entity._mood_state == "unknown"
-
-    def test_state_property_returns_mood_state(self):
-        entity, _ = _make_scene()
-        entity._mood_state = "ON"
-        assert entity.state == "ON"
-
-    def test_handle_update_on_sets_mood_state(self):
+    def test_handle_update_on_calls_record_activation(self):
         entity, _ = _make_scene()
         entity._handle_state_update({"state": "ON"})
-        assert entity._mood_state == "ON"
+        entity._async_record_activation.assert_called_once()
 
-    def test_handle_update_off_sets_mood_state(self):
+    def test_handle_update_off_does_not_call_record_activation(self):
         entity, _ = _make_scene()
-        entity._mood_state = "ON"
         entity._handle_state_update({"state": "OFF"})
-        assert entity._mood_state == "OFF"
+        entity._async_record_activation.assert_not_called()
 
-    def test_handle_update_missing_key_defaults_to_unknown(self):
+    def test_handle_update_missing_key_does_not_call_record_activation(self):
         entity, _ = _make_scene()
         entity._handle_state_update({})
-        assert entity._mood_state == "unknown"
+        entity._async_record_activation.assert_not_called()
 
     def test_handle_update_calls_write_ha_state(self):
         entity, _ = _make_scene()
@@ -273,28 +267,8 @@ class TestTeletaskSceneAddedToHass:
     def _run(self, coro):
         return asyncio.get_event_loop().run_until_complete(coro)
 
-    def test_seeds_mood_state_from_cache_on(self):
-        entity, _ = _make_scene(cached={"state": "ON"})
-        self._run(entity.async_added_to_hass())
-        assert entity._mood_state == "ON"
-
-    def test_seeds_mood_state_from_cache_off(self):
-        entity, _ = _make_scene(cached={"state": "OFF"})
-        self._run(entity.async_added_to_hass())
-        assert entity._mood_state == "OFF"
-
-    def test_empty_cache_leaves_unknown(self):
-        entity, _ = _make_scene(cached={})
-        self._run(entity.async_added_to_hass())
-        assert entity._mood_state == "unknown"
-
-    def test_none_cache_leaves_unknown(self):
-        entity, _ = _make_scene(cached=None)
-        self._run(entity.async_added_to_hass())
-        assert entity._mood_state == "unknown"
-
-    def test_calls_write_ha_state_after_seeding(self):
-        entity, _ = _make_scene(cached={"state": "ON"})
+    def test_calls_write_ha_state_on_added(self):
+        entity, _ = _make_scene()
         self._run(entity.async_added_to_hass())
         entity.async_write_ha_state.assert_called()
 

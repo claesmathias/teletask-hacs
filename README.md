@@ -434,11 +434,12 @@ switch.teletask_my_teletask_1_8          → RELAY #8 (switch)
 button.teletask_my_teletask_1_16         → RELAY #16 (button)
 cover.teletask_my_teletask_6_1           → MOTOR #1
 scene.teletask_my_teletask_8_1           → LOCMOOD #1
-scene.teletask_my_teletask_9_1           → GENMOOD #1
-switch.teletask_my_teletask_12_4         → FLAG #4
+scene.teletask_my_teletask_9_1           → TIMEDMOOD #1
+scene.teletask_my_teletask_10_1          → GENMOOD #1
+switch.teletask_my_teletask_15_4         → FLAG #4
 sensor.teletask_my_teletask_20_3         → SENSOR #3
 binary_sensor.teletask_my_teletask_62_42 → INPUT #42
-binary_sensor.teletask_my_teletask_63_1  → COND #1
+binary_sensor.teletask_my_teletask_60_1  → COND #1
 ```
 
 The **friendly name** shown in the HA UI comes from the `description` field in your `config.json`.
