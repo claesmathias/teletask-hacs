@@ -53,14 +53,22 @@ class _Scene(_Entity):
     def _async_record_activation(self):
         pass
 
+    async def async_added_to_hass(self):
+        pass
+
 
 # Build module stubs.
 _mod_core = types.ModuleType("homeassistant.core")
 _mod_core.callback = _callback
 _mod_core.HomeAssistant = MagicMock
 
+_mod_const = types.ModuleType("homeassistant.const")
+_mod_const.STATE_UNKNOWN = "unknown"
+_mod_const.STATE_UNAVAILABLE = "unavailable"
+
 _mod_util = types.ModuleType("homeassistant.util")
 _mod_util.dt = types.ModuleType("homeassistant.util.dt")
+_mod_util.dt.parse_datetime = MagicMock(return_value=None)
 
 _mod_entity = types.ModuleType("homeassistant.helpers.entity")
 _mod_entity.Entity = _Entity
@@ -85,6 +93,7 @@ _mod_entity_platform.AddEntitiesCallback = MagicMock
 _HA_MOCKS = {
     "homeassistant":                         types.ModuleType("homeassistant"),
     "homeassistant.core":                    _mod_core,
+    "homeassistant.const":                   _mod_const,
     "homeassistant.util":                    _mod_util,
     "homeassistant.util.dt":                 _mod_util.dt,
     "homeassistant.helpers":                 types.ModuleType("homeassistant.helpers"),
@@ -166,6 +175,7 @@ def _make_scene(
     entity.async_write_ha_state = MagicMock()
     entity.async_on_remove = MagicMock()
     entity._async_record_activation = MagicMock()
+    entity.async_get_last_state = AsyncMock(return_value=None)
     return entity, hub
 
 

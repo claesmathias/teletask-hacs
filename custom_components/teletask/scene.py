@@ -6,10 +6,12 @@ from typing import Any
 
 from homeassistant.components.scene import Scene
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+import homeassistant.util.dt as dt_util
 
 from .client import FunctionCode
 from .const import DOMAIN, SIGNAL_STATE_UPDATED, TELETASK_EVENT
@@ -71,6 +73,7 @@ class TeletaskScene(Scene):
     }
 
     async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
         signal = SIGNAL_STATE_UPDATED.format(
             central_id=self._hub.central_id,
             function=self._function,
@@ -79,6 +82,12 @@ class TeletaskScene(Scene):
         self.async_on_remove(
             async_dispatcher_connect(self.hass, signal, self._handle_state_update)
         )
+        # Restore last activation time from the HA recorder so the scene card
+        # shows a valid relative timestamp after restart (avoids NaN errors in
+        # hui-timestamp-display when the state would otherwise be "unknown").
+        if last_state := await self.async_get_last_state():
+            if last_state.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+                self._attr_last_activated = dt_util.parse_datetime(last_state.state)
         self.async_write_ha_state()
 
     @callback

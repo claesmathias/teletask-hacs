@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.5.1] — 2026-05-30
+
+### Fixed
+- **Scene timestamp NaN errors on startup** — after the 1.5.0 fix, scenes with no recorded
+  activation started with state `"unknown"`, which the HA frontend's `hui-timestamp-display`
+  tried to parse as a date and got `NaN`, throwing `RangeError: number argument must be finite`.
+  `async_added_to_hass` now calls `super().async_added_to_hass()` (enabling `RestoreEntity`)
+  and restores `_attr_last_activated` from the HA recorder so previously-activated scenes have
+  a valid ISO timestamp on startup.
+
 ## [1.5.0] — 2026-05-30
 
 ### Fixed
