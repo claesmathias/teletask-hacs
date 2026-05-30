@@ -47,7 +47,9 @@
       }
     ],
     "GENMOOD": [
-      { "number": 2, "description": "Bedtime", "hatype": "scene", "area": "Living Room" }
+      { "number": 1, "description": "All Off",	      "hatype": "scene", "area": "Living Room" },
+      { "number": 2, "description": "Bedtime",	      "hatype": "scene", "area": "Living Room" },
+      { "number": 3, "description": "Downstairs Off", "hatype": "scene", "area": "Living Room" }
     ],
     "LOCMOOD": [
       { "number": 4, "description": "Watch Tv", "hatype": "scene", "area": "Living Room" }
