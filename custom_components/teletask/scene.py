@@ -6,7 +6,6 @@ from typing import Any
 
 from homeassistant.components.scene import Scene
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import DeviceInfo
@@ -55,6 +54,10 @@ class TeletaskScene(Scene):
 
         self._attr_unique_id = f"teletask_{central_id}_{self._function}_{self._number}"
         self._attr_name = description
+        # Seed a valid ISO timestamp so entity.state never returns "unknown".
+        # HA may call entity.state during registration (before async_added_to_hass),
+        # and hui-timestamp-display throws RangeError if it receives a non-date string.
+        self._attr_last_activated = dt_util.utcnow()
         device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{central_id}_{self._function}_{self._number}")},
             name=description,
@@ -73,6 +76,13 @@ class TeletaskScene(Scene):
     }
 
     async def async_added_to_hass(self) -> None:
+        # Write a valid ISO timestamp BEFORE the first yield point (await super).
+        # HA restores "unknown" from core.restore_state into the state machine
+        # when it registers the entity; the event loop can flush that WebSocket
+        # event during await super(), causing hui-timestamp-display to receive
+        # "unknown" and throw RangeError: number argument must be finite.
+        # Overwrite the stale entry synchronously before any yield.
+        self.async_write_ha_state()
         await super().async_added_to_hass()
         signal = SIGNAL_STATE_UPDATED.format(
             central_id=self._hub.central_id,
@@ -82,13 +92,7 @@ class TeletaskScene(Scene):
         self.async_on_remove(
             async_dispatcher_connect(self.hass, signal, self._handle_state_update)
         )
-        # hui-timestamp-display has no NaN guard and throws RangeError when it
-        # receives a non-date string (e.g. the "unknown" HA pre-loads from its
-        # core.restore_state snapshot before integrations finish loading).
-        # Write a valid ISO timestamp immediately to overwrite any stale entry,
-        # then refine with the real last-activation time from the recorder.
-        self._attr_last_activated = dt_util.utcnow()
-        self.async_write_ha_state()
+        # Refine with the real last-activation time from the recorder.
         if last_state := await self.async_get_last_state():
             parsed = dt_util.parse_datetime(last_state.state)
             refined = parsed or last_state.last_changed

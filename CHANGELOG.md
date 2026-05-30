@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.5.4] — 2026-05-30
+
+### Fixed
+- **Scene `insertBefore` NaN error not covered by 1.5.3** — 1.5.3 moved the
+  `async_write_ha_state()` call to the start of `async_added_to_hass`, but still
+  after `await super().async_added_to_hass()`. That `await` is a yield point: the
+  event loop can flush the `"unknown"` WebSocket state-change event to the browser
+  before our valid ISO timestamp overwrites it, causing Lovelace to re-render
+  (lit-html `insertBefore`) with an invalid datetime. Two changes:
+  - `_attr_last_activated` is now seeded to `dt_util.utcnow()` in `__init__` so
+    `entity.state` never returns `"unknown"` even before `async_added_to_hass` runs.
+  - `async_write_ha_state()` is called as the very first line of
+    `async_added_to_hass` (before `await super()`), eliminating the yield-point
+    race entirely.
+
 ## [1.5.3] — 2026-05-30
 
 ### Fixed
