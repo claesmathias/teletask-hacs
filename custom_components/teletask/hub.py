@@ -45,7 +45,11 @@ class TeletaskHub:
         self._parse_config()
         connected = await self._client.connect()
         if connected:
-            await self._subscribe_all()
+            # Run subscription in the background so async_setup_entry returns
+            # quickly and entity platforms are set up immediately.  Entities
+            # get their initial state from the HA recorder; real-time updates
+            # arrive via the dispatcher as the central responds.
+            self.hass.async_create_task(self._subscribe_all())
         else:
             _LOGGER.warning(
                 "Could not connect to Teletask central at %s:%s — will retry every %ss",

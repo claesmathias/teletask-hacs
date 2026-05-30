@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.5.3] — 2026-05-30
+
+### Fixed
+- **Scene timestamp NaN errors during startup window** — `hub.async_setup()` was awaiting
+  `_subscribe_all()` (1.5+ second wait) before `async_forward_entry_setups` was called,
+  leaving HA's `core.restore_state` snapshot of `"unknown"` visible to the frontend
+  for the entire duration. Subscription is now started as a background task so entity
+  platforms are set up immediately and entities write a valid ISO timestamp to the state
+  machine before any page render can race the window.
+- **Two-phase scene state write** — `async_added_to_hass` now writes `dt_util.utcnow()`
+  immediately (overwriting the stale snapshot entry at the earliest possible moment),
+  then refines with the recorder value (`last_state.last_changed` fallback) once the
+  `async_get_last_state()` await returns.
+
 ## [1.5.2] — 2026-05-30
 
 ### Fixed

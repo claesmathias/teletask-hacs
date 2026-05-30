@@ -82,17 +82,19 @@ class TeletaskScene(Scene):
         self.async_on_remove(
             async_dispatcher_connect(self.hass, signal, self._handle_state_update)
         )
-        # hui-timestamp-display in this HA frontend has no NaN guard: it always
-        # tries to format the scene state as a relative date.  We must ensure
-        # _attr_last_activated is always a valid datetime — "unknown" causes
-        # RangeError: number argument must be finite.
-        # Priority: stored ISO timestamp > last_changed of whatever was stored > now.
+        # hui-timestamp-display has no NaN guard and throws RangeError when it
+        # receives a non-date string (e.g. the "unknown" HA pre-loads from its
+        # core.restore_state snapshot before integrations finish loading).
+        # Write a valid ISO timestamp immediately to overwrite any stale entry,
+        # then refine with the real last-activation time from the recorder.
+        self._attr_last_activated = dt_util.utcnow()
+        self.async_write_ha_state()
         if last_state := await self.async_get_last_state():
             parsed = dt_util.parse_datetime(last_state.state)
-            self._attr_last_activated = parsed or last_state.last_changed or dt_util.utcnow()
-        else:
-            self._attr_last_activated = dt_util.utcnow()
-        self.async_write_ha_state()
+            refined = parsed or last_state.last_changed
+            if refined:
+                self._attr_last_activated = refined
+                self.async_write_ha_state()
 
     @callback
     def _handle_state_update(self, state: dict) -> None:
