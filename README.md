@@ -43,6 +43,21 @@ Connects directly over TCP — **no MQTT broker, no Java bridge, no Docker conta
 
 ---
 
+## Documentation & test license
+
+- [`docs/TDS LIBRARY V3.7.pdf`](<docs/TDS LIBRARY V3.7.pdf>) — the official Teletask TDS protocol library reference, included locally in this repo for convenience.
+- [`docs/TELETASK Technical Handbook_EN_2019.01.24.pdf`](<docs/TELETASK Technical Handbook_EN_2019.01.24.pdf>) — the general TELETASK technical handbook.
+- [`test-license/TT15132-TEST MODE LICENTIE.act`](<test-license/TT15132-TEST MODE LICENTIE.act>) — a TDS15132 **test mode** activation file. It unlocks the TCP API in TELETASK PROSOFT without a paid licence, for development/testing purposes only.
+
+### Installing the test license in PROSOFT
+
+1. Start the **TELETASK PROSOFT** software and open your project's `.NBT` file.
+2. Navigate to the top menu and select **Extra → Licenses**.
+3. Import the `TT15132-TEST MODE LICENTIE.act` file into the project.
+4. Save the `.NBT` file and transmit the updated configuration to your central unit.
+
+---
+
 ## Installation
 
 ### Via HACS (recommended)

@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.5.6] — 2026-07-24
+
+### Added
+- **`docs/` folder** — local copies of the official Teletask reference PDFs
+  (`TDS LIBRARY V3.7.pdf` and `TELETASK Technical Handbook_EN_2019.01.24.pdf`).
+- **`test-license/` folder** — a TDS15132 test-mode activation file for
+  unlocking the TCP API in TELETASK PROSOFT without a paid licence, for
+  development/testing purposes.
+- **README** — new "Documentation & test license" section documenting the
+  above and the steps to import the test license in PROSOFT
+  (Extra → Licenses → import `.act` → save `.NBT` → transmit to central unit).
+
 ## [1.5.4] — 2026-05-30
 
 ### Fixed
