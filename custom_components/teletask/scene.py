@@ -14,6 +14,7 @@ import homeassistant.util.dt as dt_util
 
 from .client import FunctionCode
 from .const import DOMAIN, SIGNAL_STATE_UPDATED, TELETASK_EVENT
+from .entity import central_link
 from .hub import TeletaskHub
 
 _LOGGER = logging.getLogger(__name__)
@@ -59,6 +60,7 @@ class TeletaskScene(Scene):
             name=description,
             manufacturer="Teletask",
             model=component.get("function_name", "Component"),
+            **central_link(hub),
         )
         if area := component.get("area"):
             device_info["suggested_area"] = area

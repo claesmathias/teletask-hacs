@@ -1,0 +1,17 @@
+# Local Home Assistant for testing this integration.
+#   docker compose -f docker-compose.dev.yml up -d      → http://localhost:8124
+#   docker compose -f docker-compose.dev.yml restart    → pick up code changes
+#   docker compose -f docker-compose.dev.yml logs -f
+# Port 8124 so it can run next to other dev instances on 8123.
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: ha-teletask-dev
+    ports:
+      - "8124:8123"
+    environment:
+      - TZ=Europe/Brussels
+    volumes:
+      - ./.ha-dev/config:/config
+      - ./custom_components/teletask:/config/custom_components/teletask:ro
+    restart: unless-stopped

@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import logging
 
+from homeassistant.const import EntityCategory
 from homeassistant.core import callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import Entity
 
@@ -11,6 +13,19 @@ from .const import DOMAIN, SIGNAL_STATE_UPDATED
 from .hub import TeletaskHub
 
 _LOGGER = logging.getLogger(__name__)
+
+_SUPPORTS_VIA_DEVICE_ID = "via_device_id" in getattr(dr.DeviceInfo, "__annotations__", {})
+
+
+def central_link(hub: TeletaskHub) -> dict:
+    """Device-info keys that show a component device as "Connected via" the central.
+
+    HA 2026.11 deprecates via_device (removed in 2027.8) in favour of
+    via_device_id; older HA versions only know via_device.
+    """
+    if _SUPPORTS_VIA_DEVICE_ID and hub.central_device_id:
+        return {"via_device_id": hub.central_device_id}
+    return {"via_device": (DOMAIN, hub.central_id)}
 
 
 class TeletaskEntity(Entity):
@@ -37,6 +52,7 @@ class TeletaskEntity(Entity):
             "name": self._description,
             "manufacturer": "Teletask",
             "model": component.get("function_name", "Component"),
+            **central_link(hub),
         }
         if area := component.get("area"):
             device_info["suggested_area"] = area
@@ -74,4 +90,32 @@ class TeletaskEntity(Entity):
             "ENTITY UPDATE %s  fn=%d num=%d  %s → %s",
             self._description, self._function, self._number, prev, state,
         )
+        self.async_write_ha_state()
+
+
+class TeletaskCentralStatusEntity(Entity):
+    """Diagnostic entity on the central device that follows the hub's status.
+
+    Updated through the hub's status signal (connection changes and events),
+    not through the support web page, so it stays available when port 80 is
+    unreachable.
+    """
+
+    _attr_should_poll = False
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _key: str
+
+    def __init__(self, hub: TeletaskHub) -> None:
+        self._hub = hub
+        self._attr_unique_id = f"teletask_{hub.central_id}_central_{self._key}"
+        self._attr_device_info = {"identifiers": {(DOMAIN, hub.central_id)}}
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(
+            async_dispatcher_connect(self.hass, self._hub.status_signal, self._handle_status)
+        )
+
+    @callback
+    def _handle_status(self) -> None:
         self.async_write_ha_state()

@@ -17,22 +17,23 @@
       },
       "config": {
         "title": "Teletask Component Configuration",
-        "description": "Enter the path to your config.json file on the Home Assistant server.\n\nExample: `{example_path}`\n\nRelative paths are resolved from `/config/`. The file must be inside your `/config/` directory.",
+        "description": "Enter the path to your config.json file on the Home Assistant server.\n\nExample: `{example_path}`\n\nRelative paths are resolved from your Home Assistant configuration folder, and the file must be inside it. The path is remembered: after editing the file, just reload the integration.",
         "data": {
           "config_file_path": "Path to config.json"
         },
         "data_description": {
-          "config_file_path": "Full or relative path to your Teletask config.json file, e.g. /config/teletask/config.json"
+          "config_file_path": "Full or relative path to your Teletask config.json file, e.g. teletask/config.json"
         }
       }
     },
     "error": {
       "cannot_resolve": "Hostname could not be resolved. Check that the hostname is correct and your DNS is working.",
       "cannot_connect": "Cannot connect to the Teletask central unit. Check the hostname or IP address and port.",
-      "file_not_found": "File not found. Make sure the path is correct and the file exists.",
-      "invalid_json": "The file does not contain valid JSON. Please check the file content.",
-      "cannot_read_file": "Could not read the file. Check file permissions.",
-      "path_outside_config": "For security reasons, the file must be inside the /config/ directory.",
+      "file_not_found": "File not found: {error}",
+      "invalid_json": "The file is not valid JSON — {error}",
+      "invalid_config": "Configuration problem — {error}",
+      "cannot_read_file": "Could not read the file: {error}",
+      "path_outside_config": "For security reasons, the file must be inside the Home Assistant configuration folder ({error}).",
       "unknown": "Unexpected error — check the Home Assistant logs."
     },
     "abort": {
@@ -42,22 +43,71 @@
   "options": {
     "step": {
       "init": {
-        "title": "Update Teletask Configuration",
-        "description": "Point to a new or updated config.json file.\n\nExample: `{example_path}`",
+        "title": "Teletask Configuration",
+        "description": "Linked config file: `{path}`",
+        "menu_options": {
+          "edit_components": "Edit components",
+          "edit_yaml": "Edit as YAML (advanced)",
+          "reload_file": "Reload from file",
+          "settings": "Settings"
+        }
+      },
+      "reload_file": {
+        "title": "Reload from File",
+        "description": "Read the component configuration from this file and reload the integration. Change the path to link a different file.\n\nExample: `{example_path}`",
         "data": {
-          "config_file_path": "Path to config.json",
+          "config_file_path": "Path to config.json"
+        },
+        "data_description": {
+          "config_file_path": "Relative paths are resolved from your Home Assistant configuration folder."
+        }
+      },
+      "settings": {
+        "title": "Settings",
+        "data": {
           "debug_log": "Enable debug logging (TX/RX bytes)"
         },
         "data_description": {
           "debug_log": "Logs every sent and received byte to the Home Assistant log at DEBUG level. Disable when not actively debugging."
         }
+      },
+      "edit_components": {
+        "title": "Edit Components",
+        "description": "Choose a component type to add, change or remove its components. You can edit several types before saving.\n\n{status}"
+      },
+      "edit_type": {
+        "title": "{type}",
+        "description": "Click a component to edit it, or use **Add** to create one.\n\n- Entities keep their entity IDs as long as the number stays the same.\n- **Area** only applies when a component's device is first created. To move an existing device, change its area in Home Assistant.\n- A removed component's entity stays behind as unavailable; delete it under Settings → Entities if you don't need it.\n\nChanges are saved when you choose **Save changes and reload** on the previous screen.",
+        "data": {
+          "components": "Components"
+        }
+      },
+      "edit_yaml": {
+        "title": "Edit as YAML",
+        "description": "{note}Edit the full configuration. Saving checks it, writes it to {target} as JSON, and reloads the integration.",
+        "data": {
+          "config": "Configuration"
+        }
       }
     },
     "error": {
-      "file_not_found": "File not found.",
-      "invalid_json": "File contains invalid JSON.",
-      "cannot_read_file": "Cannot read the file.",
-      "path_outside_config": "File must be inside /config/."
+      "file_not_found": "File not found: {error}",
+      "invalid_json": "Not valid JSON — {error}",
+      "invalid_config": "Configuration problem — {error}",
+      "cannot_read_file": "Could not read the file: {error}",
+      "cannot_write_file": "Could not save the file: {error}",
+      "path_outside_config": "The file must be inside the Home Assistant configuration folder ({error})."
+    },
+    "abort": {
+      "no_changes": "No changes were made.",
+      "config_invalid": "The configuration can't be opened in the component editor because it has an error: {error}\n\nFix it with **Edit as YAML** or in the file, then try again.",
+      "cannot_write_file": "Could not save the file: {error}"
+    }
+  },
+  "issues": {
+    "central_unreachable": {
+      "title": "Teletask central unit unreachable",
+      "description": "Home Assistant can't reach the Teletask central unit **{central_id}** at `{host}:{port}` since {since}.\n\nLast error: {error}\n\nTeletask lights, switches and scenes can't be controlled and their states aren't updated until it's back. The integration keeps retrying every 30 seconds, and this message disappears by itself once the connection is restored.\n\nCheck that the central unit is powered on and on the network, and that no other application is using all of its TCP connections."
     }
   }
 }

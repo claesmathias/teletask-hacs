@@ -1,5 +1,89 @@
 # Changelog
 
+## [1.7.0] — 2026-11-07
+
+### Added
+- **Reload picks up `config.json` changes.** The config file path is now
+  remembered, and the file is re-read on every load. After editing the file,
+  the integration's normal **Reload** (or an HA restart) is enough.
+- **Configure menu** with four options:
+  - **Edit components**: a menu of component types with counts, each opening
+    Home Assistant's native list editor. Every component is edited in a form
+    with a number box, name, `hatype` dropdown (only the values valid for that
+    type), area dropdown and type-specific fields (relay pulse length, sensor
+    type, decimals and unit). Add and remove components, edit several types,
+    then save once.
+  - **Edit as YAML (advanced)**: the full configuration in HA's code editor.
+    If the file is broken, it opens the last loaded version for repair.
+  - **Reload from file**: path pre-filled; enter a new path to link another file.
+  - **Settings**: debug logging.
+  Saving validates the configuration, writes it to the linked file as JSON with
+  one component per line (keeping the previous version as `.bak`) and reloads.
+  Keys the forms don't show are preserved.
+- **Config validation** with readable errors: JSON syntax errors give line and
+  column, and structure problems are named (unknown component type, duplicate
+  or missing `number`, non-text `description`).
+- **`Connection` diagnostic sensor** on the central device: shows whether the
+  TCP control connection is up, updated on connect and disconnect (no polling).
+  Until now an outage was only visible in the log.
+- **`Last event` diagnostic sensor**: when the central last reported a state
+  change. The first event after a start or reload is shown immediately; after
+  that it's throttled to one write per minute so resubscribe bursts don't
+  flood the recorder.
+- **Repairs entry when the central is unreachable**: after 5 minutes
+  disconnected, *Teletask central unit unreachable* appears under Settings →
+  System → Repairs, with since when, the host and port, and the last error. It
+  clears itself on reconnect; shorter blips never raise it.
+
+### Changed
+- **Requires Home Assistant 2025.7 or newer** (was 2023.1). The component
+  editor uses the object selector's form fields, added in 2025.7; HACS won't
+  offer this version on older installations.
+- If the linked file is missing or invalid at load, the integration keeps
+  running on the last successfully loaded configuration and shows a
+  notification, instead of silently using a stale copy.
+- Relative paths resolve against HA's configuration folder instead of a
+  hard-coded `/config`.
+- **Ready for HA 2027.8.** Component devices now link to the central with
+  `via_device_id`; HA 2026.11 deprecates the old `via_device` link (and logs a
+  warning per platform) and removes it in 2027.8. Older HA versions keep using
+  `via_device`.
+- **Local dev setup**: `docker-compose.dev.yml` (Home Assistant on
+  http://localhost:8124) and `tools/fake_central.py` (a fake central speaking
+  the Teletask protocol and serving the support page) to test the integration,
+  including outages, without touching a real installation. See README → Local
+  development.
+- **Less log noise during outages.** A failed reconnect no longer logs an error
+  every 30 seconds. The log now gets one warning when the outage starts (with
+  the reason) and one when it ends, with the duration and number of attempts.
+  Individual retries are logged at debug level.
+- Entries created before 1.7.0 have no remembered path; link it once via
+  **Configure → Reload from file**.
+
+
+### Fixed
+- **Scenes are now "Connected via" the central** like every other component.
+  Mood and timed-function devices were missing the link and showed up as
+  separate, unrelated devices. Existing devices are updated in place; entity
+  IDs don't change.
+
+## [1.6.0] — 2026-11-05
+
+_Not released separately; included in 1.7.0._
+
+### Added
+- **Central unit device** — the central now appears as its own device, filled in
+  from its built-in support web page (`/cgi-bin/serial.cgi`): model (e.g. PICOS),
+  serial number, MAC address, PROSOFT version (firmware), disk version
+  (hardware), and a link to the web page. All component devices now show
+  "Connected via" the central.
+- **Diagnostic sensors** on the central device, read every 5 minutes:
+  `Clock` (the central's clock from `/cgi-bin/time.cgi`), `Clock offset`
+  (seconds of drift against Home Assistant), and `Project file` (the loaded
+  PROSOFT `.nbt` project, with its owner as an attribute).
+- If the web page can't be reached, setup isn't blocked; the sensors are
+  unavailable until a read succeeds.
+
 ## [1.5.6] — 2026-07-24
 
 ### Added

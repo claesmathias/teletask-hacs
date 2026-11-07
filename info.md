@@ -23,7 +23,7 @@ This integration connects over TCP directly to your Teletask central unit (MICRO
 
 - A Teletask **MICROS+**, NANOS, or PICOS central unit
 - The **TDS15132 TCP licence** from Teletask (required for TCP access)
-- Home Assistant 2023.1 or newer
+- Home Assistant 2025.7 or newer
 
 ---
 
