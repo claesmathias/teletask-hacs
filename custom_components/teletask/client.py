@@ -74,6 +74,7 @@ class TeletaskClient:
         self._keep_alive_task: asyncio.Task | None = None
         self._receive_task: asyncio.Task | None = None
         self._subscribed_components: list[tuple[int, int]] = []
+        self.last_error: str | None = None  # reason of the last failed connect()
 
     # ------------------------------------------------------------------
     # Connection
@@ -91,9 +92,13 @@ class TeletaskClient:
             await self._handshake()
             self._receive_task = asyncio.ensure_future(self._receive_loop())
             self._keep_alive_task = asyncio.ensure_future(self._keep_alive_loop())
+            self.last_error = None
             return True
         except (OSError, asyncio.TimeoutError) as exc:
-            _LOGGER.error("Failed to connect to Teletask central: %s", exc)
+            # The hub decides what to log: it reports the first failure of an
+            # outage, not every 30-second retry.
+            self.last_error = str(exc) or type(exc).__name__
+            _LOGGER.debug("Failed to connect to Teletask central: %s", self.last_error)
             return False
 
     async def _handshake(self) -> None:

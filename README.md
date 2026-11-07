@@ -1,7 +1,7 @@
 # Teletask — Native Home Assistant Integration
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![HA Version](https://img.shields.io/badge/Home%20Assistant-2023.1%2B-blue.svg)](https://www.home-assistant.io/)
+[![HA Version](https://img.shields.io/badge/Home%20Assistant-2025.7%2B-blue.svg)](https://www.home-assistant.io/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A **native** Home Assistant custom integration for [Teletask](https://www.teletask.be/) domotics central units.  
@@ -39,7 +39,7 @@ Connects directly over TCP — **no MQTT broker, no Java bridge, no Docker conta
 
 - Teletask **MICROS+** (tested), NANOS or PICOS
 - **TDS15132 TCP licence** from Teletask — required for TCP API access
-- Home Assistant **2023.1** or newer
+- Home Assistant **2025.7** or newer
 
 ---
 
@@ -113,18 +113,37 @@ Place your `config.json` somewhere inside your HA `/config/` directory, for exam
 /config/teletask/config.json
 ```
 
-Relative paths (e.g. `teletask/config.json`) are resolved from `/config/` automatically. Paths outside `/config/` are rejected for security.
+Relative paths (e.g. `teletask/config.json`) are resolved from your HA configuration folder (`/config/` inside the HA container) automatically. Paths outside it are rejected for security.
 
-> **Tip:** Use the **File Editor** or **Studio Code Server** add-on to create and edit the file directly in the HA UI.
+> **Docker users:** `/config` is whatever host folder you mount there. If you mount `~/homeassistant` to `/config` and keep the file in `~/homeassistant/config/teletask/`, the path is `/config/config/teletask/config.json`.
+
+The path is remembered. The file is re-read every time the integration loads.
 
 ### Updating the config after setup
 
-Go to **Settings → Devices & Services → Teletask → Configure** to:
+**Edited the file?** Just reload: **Settings → Devices & Services → Teletask → ⋮ → Reload** (or restart HA). The integration re-reads the linked `config.json`.
 
-- Point to a different or updated `config.json`
-- Toggle **debug logging** (verbose TCP protocol output in the HA log)
+If the file is missing or invalid, the integration keeps running on the **last successfully loaded** configuration and shows a notification explaining what's wrong. Fix the file and reload again.
 
-After saving, the integration reloads and picks up the new config immediately — no restart needed.
+**Settings → Devices & Services → Teletask → Configure** opens a menu:
+
+| Option | What it does |
+|---|---|
+| **Edit components** | Pick a component type (e.g. *Relays (24)*) to get Home Assistant's list editor: click a component to edit it in a form, **Add** a new one, or delete one. The form has a number box, name, a dropdown with only the valid `hatype` values for that type, an area dropdown (your HA areas, or type a new one), and type-specific fields such as the relay button's pulse length or the sensor type. Edit several types, then choose **Save changes and reload**. |
+| **Edit as YAML (advanced)** | The full configuration in Home Assistant's code editor (YAML, syntax highlighting). If the file has an error, it opens the last successfully loaded version so you can repair it here. |
+| **Reload from file** | Re-reads `config.json` (path pre-filled) and reloads. Enter a different path to link another file. |
+| **Settings** | Toggle **debug logging** (verbose TCP protocol output in the HA log). |
+
+Both editors check the configuration before saving, write it to the linked
+file as JSON with one component per line (the previous version is kept as
+`config.json.bak`), and reload. No file editor add-on needed. Keys the forms
+don't show are preserved.
+
+Every load checks the configuration first. JSON syntax errors are reported with line and column. Structure problems are named, e.g. an unknown type such as `LOCMOD`, a duplicate `number`, or a missing `number`.
+
+> **Entity IDs are kept** across reloads and edits as long as a component keeps its **type** (e.g. `LOCMOOD`) and **number**. Renaming a `description` changes only the display name. Changing a component's type, number or `hatype` creates a new entity, which breaks HomeKit/Alexa references to the old one.
+
+> **Upgrading from 1.6 or earlier:** existing installs don't have a remembered path yet. Run **Configure → Reload from file** once with your file's path to link it.
 
 ---
 
@@ -432,6 +451,69 @@ Add an `"area"` field to any component to automatically place the device in an H
 
 ---
 
+## Central unit device
+
+The integration creates a device for the central unit itself. Every component
+device is linked to it ("Connected via"). Its details come from the central's
+built-in support web page (`http://<host>/cgi-bin/serial.cgi` and `time.cgi`),
+which is read every 5 minutes:
+
+| Device field | Source |
+|---|---|
+| Model | unit type (e.g. `PICOS`) |
+| Serial number | serial number |
+| Firmware | installed PROSOFT version |
+| Hardware | disk version |
+| MAC (connection) | MAC address |
+| Visit link | `http://<host>/` |
+
+It also exposes these **diagnostic** entities:
+
+| Entity | Source | Description |
+|---|---|---|
+| `Connection` | control connection | **Connected** / **Disconnected**: whether the TCP connection that switches outputs and receives state changes (port 55957) is up. While disconnected, the integration retries every 30 s. Attributes: `host`, `port`. |
+| `Last event` | control connection | When the central last reported a state change (any output, input, mood, …). The first event after a start or reload shows immediately; after that it updates at most once a minute, so it can lag by up to 60 s. |
+| `Clock` | web page | The central's own clock (timestamp) |
+| `Clock offset` | web page | Seconds the central's clock runs ahead (+) or behind (−) Home Assistant. Timed functions run on this clock, so watch it for drift. |
+| `Project file` | web page | PROSOFT `.nbt` project currently loaded; attributes include the owner, type code and OS date |
+
+`Connection` and `Last event` follow the control connection directly. The web
+page sensors are a separate service on port 80, polled every 5 minutes: they can
+look fine while control is down, and the reverse.
+
+### When the connection is lost
+
+- The integration retries every **30 seconds**, indefinitely.
+- After **5 minutes** without a connection, a **Repairs** entry appears
+  (**Settings → System → Repairs**: *Teletask central unit unreachable*). It
+  shows since when, the host and port, and the last error. It **clears itself**
+  on reconnect. Shorter blips, such as a central reboot, never raise it.
+- The log gets **one warning when the outage starts and one when it ends**,
+  e.g. `Reconnected to Teletask central at 192.168.11.73:55957 after 12m 5s (24
+  reconnect attempts)`. Individual retries are only logged with debug logging on.
+
+Repairs entries don't send push notifications. For a phone alert, use the
+`Connection` sensor in an automation:
+
+```yaml
+automation:
+  - alias: Teletask central disconnected
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.teletask_picos_my_teletask_connection  # check yours
+        to: "off"
+        for: "00:05:00"
+    actions:
+      - action: notify.notify
+        data:
+          title: Teletask
+          message: Lost connection to the central unit for 5 minutes.
+```
+
+The central prints its time without a usable timezone, so it is read in Home
+Assistant's configured timezone. If the web page can't be reached, setup still
+continues and the web page sensors show as unavailable.
+
 ## Entity naming
 
 Entity IDs follow this pattern:
@@ -584,6 +666,39 @@ Outgoing commands (turn on/off, set brightness, etc.) use **optimistic updates**
 ## Contributing
 
 Pull requests are welcome. To add support for `DISPLAYMESSAGE` or `TEMPERATURECONTROL (HVAC)`, the relevant protocol bytes are documented in [jeletask's MESSAGES.md](https://github.com/ridiekel/jeletask/blob/master/MESSAGES.md) and the [Teletask TDS15132 PDF](https://teletask.be/media/3109/tds15132-library.pdf).
+
+### Local development
+
+Run the integration in a throwaway Home Assistant in Docker, against a fake
+central, without touching your real installation:
+
+```bash
+# 1. Fake central (Teletask protocol on 55957, support web page on 80)
+python3 tools/fake_central.py
+
+# 2. Dev Home Assistant on http://localhost:8124 (separate terminal)
+mkdir -p .ha-dev/config/teletask && cp config.json .ha-dev/config/teletask/
+docker compose -f docker-compose.dev.yml up -d
+```
+
+Open http://localhost:8124, create a user, then add the **Teletask**
+integration with host `host.docker.internal`, port `55957`, and config file
+`teletask/config.json`.
+
+- The integration code is mounted from `custom_components/teletask`. After a
+  code change: `docker compose -f docker-compose.dev.yml restart`.
+- Simulate an outage by stopping the fake central (Ctrl+C) and start it again
+  to reconnect. The Repairs entry appears after 5 minutes.
+- To test against the real central, use its IP instead. That HA instance
+  then controls your real outputs.
+- Logs: `docker compose -f docker-compose.dev.yml logs -f`
+- Everything lives in `.ha-dev/` (git-ignored); delete it to start over.
+
+Offline unit tests (no HA or central needed):
+
+```bash
+pytest tests/test_configfile.py tests/test_entities.py tests/test_webinfo.py
+```
 
 ---
 
