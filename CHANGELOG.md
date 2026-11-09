@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.8.0] — 2026-11-09
+
+### Added
+- **Automatic discovery.** Teletask central units are discovered through DHCP
+  by their MAC address (Teletask ranges `00:50:C2:6A:4`, `70:B3:D5:C5:6` and
+  `E4:1E:0A:C`). Only devices that answer on the control port are offered, and
+  the setup form opens with the discovered IP address filled in.
+- **DHCP address changes are followed.** When a configured central gets a new
+  IP address, the entry is updated and reloaded (entries set up with a
+  hostname keep it).
+
+### Changed
+- Config entries are now identified by the central's MAC address (read from
+  its support page) instead of `host:port`. Existing entries are migrated
+  automatically on the next load or when the central is discovered.
+
 ## [1.7.0] — 2026-11-07
 
 ### Added

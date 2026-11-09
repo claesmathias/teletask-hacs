@@ -3,21 +3,32 @@
 Setup asks for the connection details and the path to config.json. The path is
 remembered: the file is re-read on every setup (HA start or integration Reload),
 and the options menu can reload it, edit it in the browser, or change settings.
+
+Central units are also discovered automatically through DHCP (see the MAC
+prefixes in manifest.json): the discovered address is pre-filled in the
+connection step, and an already configured central follows a DHCP address
+change without user action.
 """
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
+import re
 import socket
 from typing import Any
 
+import aiohttp
 import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import area_registry as ar
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import ObjectSelector, ObjectSelectorConfig
+from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo
 
 from .configfile import (
     BACKUP_SUFFIX,
@@ -45,6 +56,7 @@ from .const import (
     DEFAULT_PORT,
     DOMAIN,
 )
+from .webinfo import SERIAL_PATH, CentralInfo, parse_serial_page
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,13 +65,20 @@ CONF_COMPONENTS = "components"               # list editor field
 CONF_CONFIG = "config"                       # YAML editor field
 EXAMPLE_PATH = "teletask/config.json"
 
-STEP_CONNECTION_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_HOST): str,
-        vol.Required(CONF_PORT, default=DEFAULT_PORT): int,
-        vol.Required(CONF_CENTRAL_ID, default="my_teletask"): str,
-    }
-)
+DEFAULT_CENTRAL_ID = "my_teletask"
+DISCOVERY_WEB_TIMEOUT = aiohttp.ClientTimeout(total=5)
+_MAC_UNIQUE_ID = re.compile(r"[0-9a-f]{2}(?::[0-9a-f]{2}){5}")
+
+
+def _connection_schema(host: str | None = None) -> vol.Schema:
+    host_key = vol.Required(CONF_HOST, default=host) if host else vol.Required(CONF_HOST)
+    return vol.Schema(
+        {
+            host_key: str,
+            vol.Required(CONF_PORT, default=DEFAULT_PORT): int,
+            vol.Required(CONF_CENTRAL_ID, default=DEFAULT_CENTRAL_ID): str,
+        }
+    )
 
 
 def _path_schema(default: str) -> vol.Schema:
@@ -67,12 +86,64 @@ def _path_schema(default: str) -> vol.Schema:
 
 
 class TeletaskConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Step 1: host / port / central_id. Step 2: path to config.json."""
+    """Step 1: host / port / central_id. Step 2: path to config.json.
+
+    A DHCP discovery starts the same flow with the host pre-filled.
+    """
 
     VERSION = 1
 
     def __init__(self) -> None:
         self._connection_data: dict[str, Any] = {}
+        self._discovered_host: str | None = None
+        self._discovered_mac: str | None = None
+
+    async def async_step_dhcp(self, discovery_info: DhcpServiceInfo) -> FlowResult:
+        """Handle a central unit found by DHCP (MAC prefix or known device)."""
+        host = discovery_info.ip
+        mac = dr.format_mac(discovery_info.macaddress)
+
+        await self.async_set_unique_id(mac)
+        # Follow a DHCP address change, but never replace a hostname the user
+        # typed with an IP address.
+        existing = next(
+            (e for e in self._async_current_entries() if e.unique_id == mac), None
+        )
+        updates = (
+            {CONF_HOST: host}
+            if existing is not None and _is_ip_address(existing.data.get(CONF_HOST, ""))
+            else None
+        )
+        self._abort_if_unique_id_configured(updates=updates)
+
+        # Entries created before discovery existed are keyed by "host:port";
+        # adopt the MAC as their unique ID so they are recognised from now on.
+        if legacy := await self._async_find_legacy_entry(mac, host):
+            changed_host = (
+                legacy.data.get(CONF_HOST) != host
+                and _is_ip_address(legacy.data.get(CONF_HOST, ""))
+            )
+            self.hass.config_entries.async_update_entry(
+                legacy,
+                unique_id=mac,
+                data={**legacy.data, CONF_HOST: host} if changed_host else legacy.data,
+            )
+            if changed_host:
+                self.hass.config_entries.async_schedule_reload(legacy.entry_id)
+            return self.async_abort(reason="already_configured")
+
+        # Teletask makes other networked products (touch screens, gateways);
+        # only a central unit listens on the control port.
+        if await _async_test_connection(host, DEFAULT_PORT) != "ok":
+            return self.async_abort(reason="not_teletask_central")
+
+        info = await _async_fetch_central_info(self.hass, host)
+        self._discovered_host = host
+        self._discovered_mac = mac
+        self.context["title_placeholders"] = {
+            "name": f"{info.model or 'Central unit'} ({host})"
+        }
+        return await self.async_step_user()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -91,7 +162,7 @@ class TeletaskConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=STEP_CONNECTION_SCHEMA,
+            data_schema=_connection_schema(self._discovered_host),
             errors=errors,
             description_placeholders={"default_port": str(DEFAULT_PORT)},
         )
@@ -111,8 +182,11 @@ class TeletaskConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = err.code
                 placeholders["error"] = err.detail
             else:
+                host = self._connection_data[CONF_HOST]
+                port = self._connection_data[CONF_PORT]
+                self._async_abort_entries_match({CONF_HOST: host, CONF_PORT: port})
                 await self.async_set_unique_id(
-                    f"{self._connection_data[CONF_HOST]}:{self._connection_data[CONF_PORT]}"
+                    await self._async_unique_id_for(host, port), raise_on_progress=False
                 )
                 self._abort_if_unique_id_configured()
                 return self.async_create_entry(
@@ -130,6 +204,42 @@ class TeletaskConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
             description_placeholders=placeholders,
         )
+
+    async def _async_find_legacy_entry(
+        self, mac: str, host: str
+    ) -> config_entries.ConfigEntry | None:
+        """A configured entry not keyed by MAC that belongs to this central.
+
+        Matched through the central's device (which records the MAC since 1.7)
+        or, failing that, through its configured host.
+        """
+        legacy = [
+            e for e in self._async_current_entries(include_ignore=False)
+            if not _is_mac_unique_id(e.unique_id)
+        ]
+        device = dr.async_get(self.hass).async_get_device(
+            connections={(dr.CONNECTION_NETWORK_MAC, mac)}
+        )
+        if device is not None:
+            for entry in legacy:
+                if entry.entry_id in device.config_entries:
+                    return entry
+        for entry in legacy:
+            if await _async_host_matches(self.hass, entry.data.get(CONF_HOST, ""), host):
+                return entry
+        return None
+
+    async def _async_unique_id_for(self, host: str, port: int) -> str:
+        """The central's MAC address if known, else "host:port".
+
+        Using the MAC lets discovery recognise manually added centrals.
+        """
+        if self._discovered_mac and host == self._discovered_host:
+            return self._discovered_mac
+        info = await _async_fetch_central_info(self.hass, host)
+        if info.mac_address:
+            return dr.format_mac(info.mac_address)
+        return f"{host}:{port}"
 
     @staticmethod
     def async_get_options_flow(
@@ -472,6 +582,48 @@ async def _async_load_file(hass, path_input: str) -> tuple[str, str]:
         return path, text
 
     return await hass.async_add_executor_job(_load)
+
+
+def _is_ip_address(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
+
+
+def _is_mac_unique_id(unique_id: str | None) -> bool:
+    """True for a unique ID in format_mac() form (aa:bb:cc:dd:ee:ff)."""
+    return bool(unique_id) and _MAC_UNIQUE_ID.fullmatch(unique_id) is not None
+
+
+async def _async_host_matches(hass, configured: str, ip: str) -> bool:
+    """Whether a configured host (IP or hostname) currently points at ``ip``."""
+    if not configured:
+        return False
+    if configured == ip:
+        return True
+    if _is_ip_address(configured):
+        return False
+    try:
+        infos = await hass.async_add_executor_job(socket.getaddrinfo, configured, None)
+    except (socket.gaierror, UnicodeError):
+        return False
+    return any(info[4][0] == ip for info in infos)
+
+
+async def _async_fetch_central_info(hass, host: str) -> CentralInfo:
+    """Best-effort read of the central's support page (model, MAC, ...)."""
+    session = async_get_clientsession(hass)
+    try:
+        async with session.get(
+            f"http://{host}{SERIAL_PATH}", timeout=DISCOVERY_WEB_TIMEOUT
+        ) as resp:
+            resp.raise_for_status()
+            return parse_serial_page((await resp.read()).decode("latin-1"))
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+        _LOGGER.debug("Could not read the support page of %s: %s", host, exc)
+        return CentralInfo()
 
 
 async def _async_test_connection(host: str, port: int) -> str:

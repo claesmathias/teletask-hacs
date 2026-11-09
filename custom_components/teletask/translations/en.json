@@ -1,9 +1,10 @@
 {
   "config": {
+    "flow_title": "{name}",
     "step": {
       "user": {
         "title": "Connect to Teletask Central Unit",
-        "description": "Enter the connection details for your Teletask central unit.",
+        "description": "Enter the connection details for your Teletask central unit. A discovered central unit's address is already filled in.",
         "data": {
           "host": "IP Address / Hostname",
           "port": "TCP Port",
@@ -37,7 +38,9 @@
       "unknown": "Unexpected error — check the Home Assistant logs."
     },
     "abort": {
-      "already_configured": "This Teletask central unit is already configured."
+      "already_configured": "This Teletask central unit is already configured.",
+      "already_in_progress": "Setup of this Teletask central unit is already in progress.",
+      "not_teletask_central": "The discovered Teletask device is not a central unit (nothing answers on the control port)."
     }
   },
   "options": {

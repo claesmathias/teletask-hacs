@@ -89,6 +89,26 @@ Restart Home Assistant.
 
 Go to **Settings → Devices & Services → Add Integration → Teletask**.
 
+### Automatic discovery
+
+Home Assistant discovers Teletask central units on your network through DHCP.
+A discovered central appears under **Settings → Devices & Services** as
+**Discovered**; click **Add** to start the setup below with its IP address
+already filled in.
+
+- Discovery recognises Teletask's registered MAC address ranges
+  (`00:50:C2:6A:4x:xx`, `70:B3:D5:C5:6x:xx`, `E4:1E:0A:Cx:xx:xx`). Other
+  Teletask products with a network port (touch screens, gateways) are ignored:
+  only a device that answers on the control port (`55957`) is offered.
+- The central must request its address by DHCP (the factory default,
+  *Dynamic* in PROSOFT). A central with a static IP address is found when Home
+  Assistant sees it on the network, or you can add it manually as before.
+- Once a central is set up, a new DHCP address is picked up automatically and
+  the integration reloads with it. If you entered a hostname instead of an IP
+  address, the hostname is kept.
+- Discovery requires Home Assistant's `dhcp` integration, which is part of
+  `default_config`.
+
 Setup is split into two steps:
 
 ### Step 1 — Connection

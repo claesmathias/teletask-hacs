@@ -70,11 +70,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         config_entry_id=entry.entry_id, **hub.central_device_info
     )
     hub.central_device_id = central_device.id
+    _async_adopt_mac_unique_id(hass, entry, hub.central_info.mac_address)
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = hub
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
+
+def _async_adopt_mac_unique_id(
+    hass: HomeAssistant, entry: ConfigEntry, mac: str | None
+) -> None:
+    """Key the entry by the central's MAC so DHCP discovery recognises it.
+
+    Entries created manually or before discovery existed use "host:port".
+    """
+    if not mac:
+        return
+    mac = dr.format_mac(mac)
+    if entry.unique_id == mac:
+        return
+    if any(
+        other.unique_id == mac
+        for other in hass.config_entries.async_entries(DOMAIN)
+        if other.entry_id != entry.entry_id
+    ):
+        return
+    _LOGGER.debug("Using MAC %s as unique ID for %s", mac, entry.title)
+    hass.config_entries.async_update_entry(entry, unique_id=mac)
 
 
 async def _async_load_config(hass: HomeAssistant, entry: ConfigEntry) -> dict:

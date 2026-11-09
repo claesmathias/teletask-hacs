@@ -31,8 +31,9 @@ This integration connects over TCP directly to your Teletask central unit (MICRO
 
 After installing via HACS and restarting Home Assistant:
 
-1. Go to **Settings → Devices & Services → Add Integration**
-2. Search for **Teletask**
-3. Enter your central unit IP, port (`55957`), a name, and paste your component JSON config
+1. Go to **Settings → Devices & Services**. A central unit on your network is
+   usually already listed under **Discovered**: click **Add**. Otherwise choose
+   **Add Integration** and search for **Teletask**
+2. Check the IP and port (`55957`), enter a name, then the path to your config.json
 
 No YAML configuration needed.
