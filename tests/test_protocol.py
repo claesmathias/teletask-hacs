@@ -816,6 +816,14 @@ class TestSensorTypes:
     def test_sensor_error_is_none(self):
         assert decode_sensor("TEMPERATURE", bytes([0x3F, 0x00]))["value"] is None
         assert decode_sensor("HUMIDITY", bytes([0xFF, 0xFF]))["value"] is None
+        assert decode_sensor("PULSECOUNTER", bytes([0x7F, 0xF0]))["value"] is None  # 32752
+        assert decode_sensor("PULSECOUNTER", bytes([0x7F, 0xFF]))["value"] is None  # 32767
+
+    def test_large_non_temperature_values_are_valid(self):
+        # 20000 W is above the temperature limit (16128) but a valid reading
+        assert decode_sensor("PULSECOUNTER", (20000).to_bytes(2, "big"))["value"] == 20000
+        assert decode_sensor("PULSECOUNTER", (32500).to_bytes(2, "big"))["value"] == 32500
+        assert decode_sensor("GAS", (16500).to_bytes(2, "big"))["value"] == 16500
 
     def test_gas_4_20ma(self):
         cfg = {"gas_type": "4-20ma", "gas_min": 0, "gas_max": 1000}

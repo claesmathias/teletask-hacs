@@ -146,7 +146,8 @@ TW_COLOR  = 230  # DoIP: + Kelvin (2 bytes) + brightness; 0xFEFE / 0xFE = unchan
 TW_UNCHANGED_KELVIN = 0xFEFE
 TW_UNCHANGED_BRIGHTNESS = 0xFE
 
-SENS_MAX = 0x3F00  # sensor values at or above this mean "sensor error"
+SENS_MAX = 0x3F00  # temperatures at or above this mean "sensor error"
+SENS_ERROR_MIN = 0x7FF0  # other sensors: 32752-32767 are error codes
 
 DISPLAY_ASCII_LINE = 16    # characters per line with ascii
 DISPLAY_UNICODE_LINE = 8   # characters per line without (UTF-16)
@@ -222,7 +223,9 @@ def decode_sensor(sensor_type: str, data: bytes, config: dict[str, Any] | None =
     raw = _short(data, 0)
     if raw is None:
         return None
-    error = raw >= SENS_MAX
+    # Only temperatures are limited to SENS_MAX; pulse counters, power and
+    # analog values legitimately go higher, up to the error codes.
+    error = raw >= SENS_ERROR_MIN
     result: dict[str, Any]
 
     if sensor_type in ("TEMPERATURE", "TEMPERATURECONTROL"):

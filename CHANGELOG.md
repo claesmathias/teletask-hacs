@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.8.1] — 2026-11-14
+
+### Fixed
+- **Large sensor readings showed as unknown.** Every sensor value from 16128
+  up was treated as a sensor error, but that limit only applies to
+  temperatures. Pulse counters, power and analog sensors go higher; for them
+  only the error codes 32752–32767 now mean "sensor error".
+
 ## [1.8.0] — 2026-11-14
 
 Checked against the protocol documents in `docs/`: TDS LIBRARY V3.4 and V3.7
