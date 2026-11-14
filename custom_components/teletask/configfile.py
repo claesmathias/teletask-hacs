@@ -25,6 +25,19 @@ KNOWN_COMPONENT_TYPES = (
     "COND",
     "INPUT",
     "TIMEDFNC",
+    "PROCES",
+    "SERVICE",
+    "AUDIO",
+    "DISPLAYMESSAGE",
+    "DIGITALINPUT",
+    "DIMMERGRP",
+    "MOTORGRP",
+    "RGB",
+    "RGBGRP",
+    "TW",
+    "TWGRP",
+    "ALARM",
+    "ACCESS",
 )
 
 BACKUP_SUFFIX = ".bak"
@@ -115,6 +128,49 @@ def validate_config(data: Any) -> None:
             description = comp.get("description")
             if description is not None and not isinstance(description, str):
                 fail(f'{type_name} {number}: "description" must be text.')
+            if type_name == "DISPLAYMESSAGE":
+                _validate_display(comp, f"DISPLAYMESSAGE {number}", fail)
+            if type_name == "ACCESS" and number != 1:
+                fail("ACCESS: the central reports badge readers as number 1 only.")
+
+
+def _numbers(value: Any) -> list[int] | None:
+    """A comma-separated string or list of whole numbers; None if invalid."""
+    if isinstance(value, str):
+        parts = [p.strip() for p in value.split(",")]
+    elif isinstance(value, list):
+        parts = value
+    elif isinstance(value, int) and not isinstance(value, bool):
+        parts = [value]
+    else:
+        return None
+    result = []
+    for part in parts:
+        try:
+            number = int(part)
+        except (TypeError, ValueError):
+            return None
+        if isinstance(part, bool) or not 0 <= number <= 255:
+            return None
+        result.append(number)
+    return result
+
+
+def _validate_display(comp: dict[str, Any], where: str, fail: Any) -> None:
+    buses = comp.get("bus_numbers")
+    addresses = comp.get("address_numbers")
+    if buses is not None or addresses is not None:  # both left out: every display
+        bus_list, address_list = _numbers(buses), _numbers(addresses)
+        if bus_list is None or address_list is None:
+            fail(f'{where}: "bus_numbers" and "address_numbers" need comma-separated numbers 0-255, e.g. "1,1".')
+        if len(bus_list) != len(address_list):
+            fail(f'{where}: "bus_numbers" and "address_numbers" must list the same number of entries.')
+    message_type = comp.get("message_type")
+    if message_type is not None and message_type not in MESSAGE_TYPES:
+        fail(f'{where}: "message_type" must be "message" or "alarm".')
+    beeps = comp.get("message_beeps")
+    if beeps is not None and (not isinstance(beeps, int) or isinstance(beeps, bool) or not 0 <= beeps <= 255):
+        fail(f'{where}: "message_beeps" must be a whole number from 0 to 255.')
 
 
 def read_config_file(path: str) -> tuple[str, dict[str, Any]]:
@@ -165,10 +221,23 @@ TYPE_LABELS = {
     "GENMOOD": "General moods",
     "TIMEDMOOD": "Timed moods",
     "FLAG": "Flags",
-    "SENSOR": "Sensors",
+    "SENSOR": "Sensors and climate zones",
     "COND": "Conditions",
-    "INPUT": "Digital inputs",
+    "INPUT": "Push buttons (interface inputs)",
     "TIMEDFNC": "Timed functions",
+    "PROCES": "Process functions",
+    "SERVICE": "Service functions",
+    "AUDIO": "Audio zones",
+    "DISPLAYMESSAGE": "Display messages",
+    "DIGITALINPUT": "Digital inputs (DoIP)",
+    "DIMMERGRP": "Dimmer groups (DoIP)",
+    "MOTORGRP": "Motor groups (DoIP)",
+    "RGB": "RGB lights (DoIP)",
+    "RGBGRP": "RGB groups (DoIP)",
+    "TW": "Tunable white (DoIP)",
+    "TWGRP": "Tunable white groups (DoIP)",
+    "ALARM": "Alarms (DoIP)",
+    "ACCESS": "Badge readers (DoIP)",
 }
 
 # Which "hatype" values each type supports (types without one have no hatype field).
@@ -183,18 +252,31 @@ HATYPE_OPTIONS = {
 }
 
 SENSOR_TYPES = ("TEMPERATURE", "HUMIDITY", "LIGHT", "GAS", "PULSECOUNTER", "TEMPERATURECONTROL")
+GAS_TYPES = ("4-20ma", "0-20ma", "0-10v", "5-10v")
+MESSAGE_TYPES = ("message", "alarm")
 
 _TYPE_SPECIFIC_FIELDS = {
     "RELAY": ("pulse_ms",),
-    "SENSOR": ("type", "decimals", "ha_unit_of_measurement"),
+    "SENSOR": ("type", "decimals", "ha_unit_of_measurement",
+               "gas_type", "gas_min", "gas_max", "pulses_per_unit", "total_unit_of_measurement",
+               "hvac_modes", "fan"),
+    "MOTOR": ("tilt", "sun_protection"),
+    "MOTORGRP": ("tilt", "sun_protection"),
+    "AUDIO": ("sources",),
+    "DISPLAYMESSAGE": ("bus_numbers", "address_numbers", "message_type", "message_beeps", "ascii"),
 }
 
 # Key order used when writing components, so files stay easy to scan.
 _KEY_ORDER = (
     "number", "description", "hatype", "type", "area",
     "pulse_ms", "decimals", "ha_unit_of_measurement",
+    "gas_type", "gas_min", "gas_max", "pulses_per_unit", "total_unit_of_measurement",
+    "hvac_modes", "fan", "tilt", "sun_protection", "sources",
+    "bus_numbers", "address_numbers", "message_type", "message_beeps", "ascii",
 )
-_INT_FIELDS = ("number", "pulse_ms")
+_INT_FIELDS = ("number", "pulse_ms", "message_beeps")
+# Editor selects return text; these keys are stored as JSON booleans.
+_BOOL_FIELDS = ("ascii", "tilt", "sun_protection", "fan")
 
 
 def editable_fields(type_name: str) -> tuple[str, ...]:
@@ -223,6 +305,12 @@ def split_for_editor(
         item = {k: v for k, v in comp.items() if k in fields}
         if "decimals" in item and not isinstance(item["decimals"], str):
             item["decimals"] = str(item["decimals"])  # shown in a text field
+        for key in _BOOL_FIELDS:
+            if isinstance(item.get(key), bool):
+                item[key] = "true" if item[key] else "false"  # shown in a select
+        for key in ("bus_numbers", "address_numbers", "sources", "hvac_modes"):
+            if isinstance(item.get(key), list):
+                item[key] = ", ".join(str(v) for v in item[key])  # shown in a text field
         items.append(item)
         hidden = {k: v for k, v in comp.items() if k not in fields}
         if hidden:
@@ -241,6 +329,9 @@ def merge_from_editor(
             value = comp.get(key)
             if isinstance(value, float) and value.is_integer():
                 comp[key] = int(value)
+        for key in _BOOL_FIELDS:
+            if comp.get(key) in ("true", "false"):
+                comp[key] = comp[key] == "true"
         for key, value in extras.get(comp.get("number"), {}).items():
             comp.setdefault(key, value)
         components.append(_ordered(comp))

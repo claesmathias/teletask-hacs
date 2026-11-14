@@ -32,6 +32,7 @@ class TeletaskEntity(Entity):
     """Shared base for all Teletask entities."""
 
     _attr_should_poll = False
+    _request_state_on_add = True
 
     def __init__(self, hub: TeletaskHub, component: dict) -> None:
         self._hub = hub
@@ -80,7 +81,8 @@ class TeletaskEntity(Entity):
         # arrives asynchronously via _on_event → dispatcher signal →
         # _handle_state_update → async_write_ha_state, guaranteeing the entity
         # always reflects reality regardless of hub-cache timing at startup.
-        await self._hub.async_request_state(self._function, self._number)
+        if self._request_state_on_add:
+            await self._hub.async_request_state(self._function, self._number)
 
     @callback
     def _handle_state_update(self, state: dict) -> None:

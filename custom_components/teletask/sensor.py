@@ -52,8 +52,9 @@ _SENSOR_TYPE_MAP = {
         "unit": None,
     },
     "PULSECOUNTER": {
-        "device_class": SensorDeviceClass.ENERGY,
-        "state_class": SensorStateClass.TOTAL_INCREASING,
+        # Real-time value (e.g. W); the running total is a separate sensor.
+        "device_class": None,
+        "state_class": SensorStateClass.MEASUREMENT,
         "unit": None,
     },
     "TEMPERATURECONTROL": {
@@ -70,8 +71,12 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     hub: TeletaskHub = hass.data[DOMAIN][entry.entry_id]
-    entities: list[SensorEntity] = [
-        TeletaskSensor(hub, comp) for comp in hub.get_components_by_function(FunctionCode.SENSOR)
+    sensors = hub.get_components_by_function(FunctionCode.SENSOR)
+    entities: list[SensorEntity] = [TeletaskSensor(hub, comp) for comp in sensors]
+    entities += [
+        TeletaskPulseTotalSensor(hub, comp)
+        for comp in sensors
+        if comp.get("config", {}).get("type") == "PULSECOUNTER"
     ]
     entities += [
         TeletaskCentralClockSensor(hub),
@@ -83,19 +88,23 @@ async def async_setup_entry(
 
 
 class TeletaskSensor(TeletaskEntity, SensorEntity):
-    """A Teletask sensor."""
+    """A Teletask sensor zone's measured value."""
 
     def __init__(self, hub: TeletaskHub, component: dict) -> None:
         super().__init__(hub, component)
-        sensor_type = component.get("config", {}).get("type", "TEMPERATURE")
-        meta = _SENSOR_TYPE_MAP.get(sensor_type, _SENSOR_TYPE_MAP["TEMPERATURE"])
+        config = component.get("config", {})
+        self._sensor_type = config.get("type", "TEMPERATURE")
+        meta = _SENSOR_TYPE_MAP.get(self._sensor_type, _SENSOR_TYPE_MAP["TEMPERATURE"])
         self._attr_device_class = meta["device_class"]
         self._attr_state_class = meta["state_class"]
         # Allow config.json to override unit
         self._attr_native_unit_of_measurement = (
-            component.get("config", {}).get("ha_unit_of_measurement")
+            config.get("ha_unit_of_measurement")
             or meta["unit"]
         )
+        decimals = _int_or_none(config.get("decimals"))
+        if decimals is not None:
+            self._attr_suggested_display_precision = decimals
 
     @property
     def native_value(self) -> float | None:
@@ -109,9 +118,38 @@ class TeletaskSensor(TeletaskEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict:
+        if self._sensor_type == "TEMPERATURECONTROL":
+            return {}  # the climate entity carries the zone's settings
         attrs = dict(self._state_dict)
         attrs.pop("value", None)
+        attrs.pop("state", None)
         return attrs
+
+
+class TeletaskPulseTotalSensor(TeletaskEntity, SensorEntity):
+    """Total of a pulse counter (since midnight or the last 24 h, per PROSOFT)."""
+
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+
+    def __init__(self, hub: TeletaskHub, component: dict) -> None:
+        super().__init__(hub, component)
+        config = component.get("config", {})
+        self._attr_unique_id = f"{self._attr_unique_id}_total"
+        self._attr_name = f"{self._description} total"
+        self._attr_native_unit_of_measurement = config.get("total_unit_of_measurement")
+        if self._attr_native_unit_of_measurement == "kWh":
+            self._attr_device_class = SensorDeviceClass.ENERGY
+
+    @property
+    def native_value(self) -> float | None:
+        return self._state_dict.get("total")
+
+
+def _int_or_none(value) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 # ----------------------------------------------------------------------

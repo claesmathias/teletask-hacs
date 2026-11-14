@@ -83,6 +83,10 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
                     log(f"LOG subscribe fn={body[0]}")
                 elif cmd == CMD_KEEP_ALIVE:
                     pass
+                elif cmd == 0x04:                        # display message
+                    log(f"DISPLAY MESSAGE {body.hex(' ')}")
+                elif cmd == 0x22:                        # DoIP per-device subscribe
+                    log(f"SUBSCRIBE fn={body[1]} num={(body[2] << 8) | body[3]}")
                 else:
                     log(f"unhandled cmd 0x{cmd:02x} {body.hex(' ')}")
             await writer.drain()

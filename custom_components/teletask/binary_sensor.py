@@ -10,6 +10,7 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_call_later
 
 from .client import FunctionCode
 from .const import DOMAIN
@@ -30,33 +31,58 @@ async def async_setup_entry(
     for comp in hub.get_components_by_function(FunctionCode.INPUT):
         entities.append(TeletaskInputBinarySensor(hub, comp))
 
-    for comp in hub.get_components_by_function(FunctionCode.COND):
-        entities.append(TeletaskConditionBinarySensor(hub, comp))
+    for fn in (FunctionCode.COND, FunctionCode.DIGITALINPUT):
+        for comp in hub.get_components_by_function(fn):
+            entities.append(TeletaskConditionBinarySensor(hub, comp))
 
     async_add_entities(entities)
 
 
 class TeletaskInputBinarySensor(TeletaskEntity, BinarySensorEntity):
-    """A Teletask digital input (button/contact)."""
+    """A push button on a Teletask interface (FNC_TPKEY).
 
-    _attr_device_class = BinarySensorDeviceClass.OCCUPANCY
+    On while the button is held (long press). A short press has no release
+    report, so it shows as on for SHORT_PRESS_SECONDS. Each press is also an
+    event on the matching event entity.
+    """
+
+    SHORT_PRESS_SECONDS = 1.0
+
+    _cancel_release = None
 
     @property
     def is_on(self) -> bool:
-        state = self._state_dict.get("state", "OPEN")
-        # CLOSED = pressed/active, OPEN = not pressed
-        return state in ("CLOSED", "SHORT_PRESS", "LONG_PRESS")
+        return self._state_dict.get("state") in ("CLOSED", "SHORT_PRESS")
 
     @property
     def extra_state_attributes(self) -> dict:
-        return {
-            "raw_state": self._state_dict.get("state"),
-            "press_duration_millis": self._state_dict.get("press_duration_millis"),
-        }
+        return {"raw_state": self._state_dict.get("state")}
+
+    @callback
+    def _handle_state_update(self, state: dict) -> None:
+        if self._cancel_release is not None:
+            self._cancel_release()
+            self._cancel_release = None
+        super()._handle_state_update(state)
+        if state.get("state") == "SHORT_PRESS":
+            self._cancel_release = async_call_later(
+                self.hass, self.SHORT_PRESS_SECONDS, self._release
+            )
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._cancel_release is not None:
+            self._cancel_release()
+            self._cancel_release = None
+
+    @callback
+    def _release(self, _now) -> None:
+        self._cancel_release = None
+        self._state_dict = {**self._state_dict, "state": "OPEN"}
+        self.async_write_ha_state()
 
 
 class TeletaskConditionBinarySensor(TeletaskEntity, BinarySensorEntity):
-    """A Teletask condition."""
+    """A Teletask condition, or a DoIP digital input (HIGH = on)."""
 
     @property
     def is_on(self) -> bool:

@@ -21,6 +21,8 @@ from client import (  # noqa: E402
     CMD_SET, CMD_GET, CMD_LOG, CMD_GROUPGET, CMD_KEEP_ALIVE, CMD_EVENT, CMD_ACK,
     STATE_ON, STATE_OFF,
     MOTOR_STOP, MOTOR_GO_TO_POSITION,
+    TYPE_FUNCTIONS,
+    decode_sensor, decode_climate, display_targets, wrap_display_text,
 )
 
 
@@ -224,7 +226,7 @@ class TestParseEventFrame:
 
     def test_sensor_temperature(self):
         """Temperature: 2-byte big-endian tenths of Kelvin → Celsius.
-        0x0B86 = 2950 → 2950/10 - 273 = 22.0°C  (from live jeletask log)."""
+        0x0B86 = 2950 → 2950/10 - 273 = 22.0°C  (from a live central log)."""
         frame = _make_event_frame(FunctionCode.SENSOR, 19, 0x0B, 0x86)
         evt = self._parse(frame)
         assert evt.function == FunctionCode.SENSOR
@@ -466,8 +468,28 @@ class TestConstants:
         assert FunctionCode.FLAG      == 15
         assert FunctionCode.SENSOR    == 20
         assert FunctionCode.COND      == 60
-        assert FunctionCode.INPUT     == 62
-        assert FunctionCode.TIMEDFNC  == 52
+        # TDS LIBRARY V3.7: FNC_TPKEY = 52 (push buttons); DoIP: TIMEDFUNCTION = 5
+        assert FunctionCode.INPUT     == 52
+        assert FunctionCode.TIMEDFNC  == 5
+
+    def test_doip_function_codes(self):
+        assert FunctionCode.PROCES         == 3
+        assert FunctionCode.DIMMERGRP      == 13
+        assert FunctionCode.DIGITALINPUT   == 28
+        assert FunctionCode.AUDIO          == 31
+        assert FunctionCode.MOTORGRP       == 40
+        assert FunctionCode.RGBGRP         == 41
+        assert FunctionCode.TWGRP          == 42
+        assert FunctionCode.SERVICE        == 53
+        assert FunctionCode.DISPLAYMESSAGE == 54
+        assert FunctionCode.ALARM          == 59
+        assert FunctionCode.ACCESS         == 202
+        assert FunctionCode.RGB            == 217
+        assert FunctionCode.TW             == 220
+
+    def test_every_config_type_has_a_function(self):
+        import configfile
+        assert set(TYPE_FUNCTIONS) == set(configfile.KNOWN_COMPONENT_TYPES)
 
 
 # ---------------------------------------------------------------------------
@@ -773,3 +795,193 @@ class TestWatchTvLocmood4:
         assert frame[3] == self.FUNCTION
         assert frame[4] == 0xFF
         assert frame[-1] == _checksum(frame[:-1])
+
+
+# ---------------------------------------------------------------------------
+# Sensor types (TDS LIBRARY V3.7 §6.8)
+# ---------------------------------------------------------------------------
+
+class TestSensorTypes:
+    def test_temperature(self):
+        assert decode_sensor("TEMPERATURE", bytes([0x0B, 0x86]))["value"] == 22.0
+
+    def test_humidity_is_percent(self):
+        assert decode_sensor("HUMIDITY", bytes([0x00, 53]))["value"] == 53
+
+    def test_light_is_logarithmic(self):
+        # lux = 10^(value/40) - 1
+        assert decode_sensor("LIGHT", bytes([0x00, 80]))["value"] == 99
+        assert decode_sensor("LIGHT", bytes([0x00, 0]))["value"] == 0
+
+    def test_sensor_error_is_none(self):
+        assert decode_sensor("TEMPERATURE", bytes([0x3F, 0x00]))["value"] is None
+        assert decode_sensor("HUMIDITY", bytes([0xFF, 0xFF]))["value"] is None
+
+    def test_gas_4_20ma(self):
+        cfg = {"gas_type": "4-20ma", "gas_min": 0, "gas_max": 1000}
+        assert decode_sensor("GAS", bytes([0x00, 180]), cfg)["value"] == 0
+        assert decode_sensor("GAS", bytes([0x03, 0x84]), cfg)["value"] == 1000  # 900
+
+    def test_gas_without_range_is_raw(self):
+        assert decode_sensor("GAS", bytes([0x01, 0x00]))["value"] == 256
+
+    def test_pulse_counter_total(self):
+        data = bytes([0x06, 0x3A] + [0] * 14 + [0, 0, 0x27, 0x10])
+        state = decode_sensor("PULSECOUNTER", data, {"pulses_per_unit": 1000})
+        assert state["value"] == 0x063A
+        assert state["total"] == 10.0
+
+
+class TestClimate:
+    # value 22.0, target 24.0, day 25.0, night 20.0, standby 3.0, preset day,
+    # mode heat, fan medium, power on, frost 0, output heating, direction 0,
+    # night when cooling 27.0
+    DATA = bytes([0x0B, 0x86, 0x0B, 0x9A, 0x0B, 0xA4, 0x0B, 0x72, 30, 26, 95, 98, 255, 0, 8, 0, 0x0B, 0xB8])
+
+    def test_decode(self):
+        s = decode_climate(self.DATA)
+        assert s["current_temperature"] == 22.0
+        assert s["target_temperature"] == 24.0
+        assert s["day_preset"] == 25.0
+        assert s["night_preset"] == 20.0
+        assert s["standby_offset"] == 3.0
+        assert s["preset"] == "day"
+        assert s["mode"] == "heat"
+        assert s["fan_speed"] == "medium"
+        assert s["power"] == "ON"
+        assert s["output"] == 8
+        assert s["night_cool_preset"] == 27.0
+
+    def test_temperaturecontrol_sensor_includes_climate(self):
+        s = decode_sensor("TEMPERATURECONTROL", self.DATA)
+        assert s["value"] == 22.0
+        assert s["preset"] == "day"
+
+    def test_short_report_has_no_mode(self):
+        s = decode_climate(bytes([0x0B, 0x86, 0x0B, 0x9A]))
+        assert s["target_temperature"] == 24.0
+        assert "mode" not in s
+
+    def test_manual_target_frame(self):
+        # TEMPMANUAL_TARGET (87) + short, high byte first: 21.5 °C → 2945
+        frame = _client()._build_set(FunctionCode.SENSOR, 1, 87, 0x0B, 0x81)
+        assert list(frame[7:10]) == [87, 0x0B, 0x81]
+
+
+# ---------------------------------------------------------------------------
+# Other function states
+# ---------------------------------------------------------------------------
+
+class TestNewFunctionStates:
+    def _decode(self, fn, *data):
+        return TeletaskClient._decode_state(fn, bytes(data))
+
+    def test_motor_full_report(self):
+        s = self._decode(FunctionCode.MOTOR, 2, STATE_ON, 0x12, 99, 40, 0x00, 0x96)
+        assert s["sun_protection"] == "on_controlling"
+        assert s["wind_protection"] == "on_not_controlling"
+        assert s["requested_position"] == 99
+        assert s["current_position"] == 40
+        assert s["seconds_to_finish"] == 1.5
+
+    def test_onoff_functions(self):
+        for fn in (FunctionCode.PROCES, FunctionCode.SERVICE, FunctionCode.DIGITALINPUT):
+            assert self._decode(fn, STATE_ON) == {"state": "ON"}
+            assert self._decode(fn, STATE_OFF) == {"state": "OFF"}
+
+    def test_dimmer_group(self):
+        assert self._decode(FunctionCode.DIMMERGRP, 60)["brightness"] == 60
+
+    def test_audio(self):
+        data = [39, 40, 3, 5, *b"Radio", 3, *b"abc", 0]
+        s = self._decode(FunctionCode.AUDIO, *data)
+        assert s == {"state": "ON", "source": 2, "volume": 40,
+                     "source_name": "Radio", "track_line1": "abc", "track_line2": ""}
+
+    def test_audio_off(self):
+        assert self._decode(FunctionCode.AUDIO, 37)["state"] == "OFF"
+
+    def test_rgb(self):
+        assert self._decode(FunctionCode.RGB, 255, 0, 5) == {"state": "ON", "rgb": [255, 0, 5]}
+
+    def test_tunable_white(self):
+        s = self._decode(FunctionCode.TW, 0x0A, 0x8C, 0x19, 0x64, 0x0F, 0xA0, 50)
+        assert (s["min_kelvin"], s["max_kelvin"], s["kelvin"], s["brightness"]) == (2700, 6500, 4000, 50)
+
+    def test_alarm_with_text(self):
+        s = self._decode(FunctionCode.ALARM, 255, 1, 3, 2, 4, *b"Fire", 3, *b"Out")
+        assert s == {"state": "ON", "beeps": 3, "line1": "Fire", "line2": "Out"}
+
+    def test_access_report(self):
+        body = bytes([TELETASK_STX, 0, 0x14, 0xFF, 0, 0, 1, 2, 0, 0, 0x65, 0x5F, 0, 0,
+                      3, *b"Ann", 5, *b"Front"])
+        body = bytes([body[0], len(body)]) + body[2:]
+        frame = body + bytes([_checksum(body)])
+        evt, consumed = _client()._parse_frame(bytearray(frame))
+        assert consumed == len(frame)
+        assert evt.function == FunctionCode.ACCESS and evt.number == 1
+        assert evt.state["state"] == "ALLOWED"
+        assert evt.state["card_id"] == 258
+        assert (evt.state["user"], evt.state["reader"]) == ("Ann", "Front")
+
+    def test_event_carries_raw_state_bytes(self):
+        frame = _make_event_frame(FunctionCode.SENSOR, 19, 0x00, 53)
+        evt, _ = _client()._parse_frame(bytearray(frame))
+        assert evt.raw == bytes([0x00, 53])
+
+
+# ---------------------------------------------------------------------------
+# Display messages (TDS LIBRARY V3.7 §6.6)
+# ---------------------------------------------------------------------------
+
+class TestDisplayMessage:
+    def test_frame_layout_ascii(self):
+        frame = _client()._build_display_message(
+            [1, 1], [13, 5], "DOORBELL", "PLEASE OPEN!", is_message=True, ascii_mode=True, beeps=2,
+        )
+        assert frame[2] == 0x04
+        assert frame[3] == 1                       # central unit
+        assert list(frame[4:8]) == [1, 1, 13, 5]   # buses, then addresses
+        assert frame[8] == 1                       # message (not alarm)
+        assert frame[9] == 1                       # ascii
+        assert frame[10:26] == b"DOORBELL        "
+        assert frame[26:42] == b"PLEASE OPEN!    "
+        assert frame[42] == 2                      # beeps
+        assert frame[1] == len(frame) - 1          # length excludes checksum
+        assert frame[-1] == _checksum(frame[:-1])
+
+    def test_unicode_is_utf16_8_characters(self):
+        frame = _client()._build_display_message(
+            [0], [0], "Café ÉÈ", "", is_message=False, ascii_mode=False, beeps=1,
+        )
+        line1 = frame[8:24]
+        assert line1 == "Café ÉÈ ".encode("utf-16-be")
+        assert frame[6] == 0  # alarm
+
+    def test_lines_are_cut_and_beeps_clamped(self):
+        frame = _client()._build_display_message(
+            [0], [0], "x" * 30, "", is_message=True, ascii_mode=True, beeps=300,
+        )
+        assert frame[8:24] == b"x" * 16
+        assert frame[-2] == 255
+
+    def test_mismatched_targets_rejected(self):
+        with pytest.raises(ValueError):
+            _client()._build_display_message([1], [1, 2], "a", "b", is_message=True, ascii_mode=True, beeps=1)
+
+    @pytest.mark.parametrize("text,length,expected", [
+        ("Someone is at the front door", 16, ("Someone is at", "the front door")),
+        ("Garage-door-opener open", 16, ("Garage-door-", "opener open")),
+        ("Bad/Keuken", 8, ("Bad/", "Keuken")),
+        ("Short", 16, ("Short", "")),
+        ("Temperature21.5degrees", 8, ("Temperat", "ure21.5degrees")),
+    ])
+    def test_wrap(self, text, length, expected):
+        assert wrap_display_text(text, length) == expected
+
+    def test_targets(self):
+        assert display_targets({}) == ([0], [0])
+        assert display_targets({"bus_numbers": "1,1", "address_numbers": "13, 5"}) == ([1, 1], [13, 5])
+        assert display_targets({"bus_numbers": [2], "address_numbers": [7]}) == ([2], [7])
+        with pytest.raises(ValueError):
+            display_targets({"bus_numbers": "1,1", "address_numbers": "13"})

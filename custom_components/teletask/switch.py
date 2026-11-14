@@ -58,7 +58,66 @@ async def async_setup_entry(
             if ha_type == "switch":
                 entities.append(TeletaskMoodSwitch(hub, comp))
 
+    # Process functions, service functions and alarms: plain ON/OFF
+    for fn in (FunctionCode.PROCES, FunctionCode.SERVICE, FunctionCode.ALARM):
+        for comp in hub.get_components_by_function(fn):
+            entities.append(TeletaskOnOffSwitch(hub, comp))
+
+    # Sun protection of motors that have it enabled in config.json
+    for fn in (FunctionCode.MOTOR, FunctionCode.MOTORGRP):
+        for comp in hub.get_components_by_function(fn):
+            if comp.get("config", {}).get("sun_protection"):
+                entities.append(TeletaskSunProtectionSwitch(hub, comp))
+
     async_add_entities(entities)
+
+
+class TeletaskOnOffSwitch(TeletaskEntity, SwitchEntity):
+    """Any single-byte ON/OFF function: process, service, alarm."""
+
+    @property
+    def is_on(self) -> bool | None:
+        state = self._state_dict.get("state")
+        return None if state is None else state == "ON"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        # Alarms report their beeps and display text while they are on.
+        return {k: v for k, v in self._state_dict.items() if k in ("beeps", "line1", "line2")}
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self._hub.async_set_onoff(self._function, self._number, True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self._hub.async_set_onoff(self._function, self._number, False)
+
+
+class TeletaskSunProtectionSwitch(TeletaskEntity, SwitchEntity):
+    """Sun protection of a motor (MOTOR_SUN_PROTECTION), on the motor's device."""
+
+    _attr_icon = "mdi:weather-sunny-alert"
+
+    def __init__(self, hub: TeletaskHub, component: dict) -> None:
+        super().__init__(hub, component)
+        self._attr_unique_id = f"{self._attr_unique_id}_sun_protection"
+        self._attr_name = f"{self._description} sun protection"
+
+    @property
+    def is_on(self) -> bool | None:
+        state = self._state_dict.get("sun_protection")
+        if state in (None, "not_defined"):
+            return None
+        return state != "off"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {"protection_state": self._state_dict.get("sun_protection")}
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self._hub.async_set_motor_sun_protection(self._function, self._number, True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self._hub.async_set_motor_sun_protection(self._function, self._number, False)
 
 
 class TeletaskRelaySwitch(TeletaskEntity, SwitchEntity):

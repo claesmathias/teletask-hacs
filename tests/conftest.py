@@ -19,13 +19,16 @@ def teletask_config(request):
 
 
 @pytest.fixture(autouse=True)
-async def inter_test_cooldown():
+async def inter_test_cooldown(request):
     """Give the central time to clean up between tests.
 
     The Picos central needs a brief pause after a client disconnects before it
     will accept new LOG subscriptions from the next client.  Without this, rapid
     back-to-back connections in the test suite cause the central to RST the
     connection as soon as subscriptions are sent.
+
+    Only the live tests (test_connection.py) talk to a central.
     """
     yield
-    await asyncio.sleep(2.0)
+    if request.module.__name__.endswith("test_connection"):
+        await asyncio.sleep(2.0)

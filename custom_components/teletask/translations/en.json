@@ -109,5 +109,37 @@
       "title": "Teletask central unit unreachable",
       "description": "Home Assistant can't reach the Teletask central unit **{central_id}** at `{host}:{port}` since {since}.\n\nLast error: {error}\n\nTeletask lights, switches and scenes can't be controlled and their states aren't updated until it's back. The integration keeps retrying every 30 seconds, and this message disappears by itself once the connection is restored.\n\nCheck that the central unit is powered on and on the network, and that no other application is using all of its TCP connections."
     }
+  },
+  "services": {
+    "send_display_message": {
+      "name": "Send display message",
+      "description": "Show text on the Teletask touch panels of a display message.",
+      "fields": {
+        "message": {
+          "name": "Message",
+          "description": "One text, spread over both lines. Not together with line 1 or line 2."
+        },
+        "line1": {
+          "name": "Line 1",
+          "description": "The first line of the display."
+        },
+        "line2": {
+          "name": "Line 2",
+          "description": "The second line of the display."
+        },
+        "message_type": {
+          "name": "Type",
+          "description": "Message or alarm. Left out: the display's default in config.json, or else alarm."
+        },
+        "beeps": {
+          "name": "Beeps",
+          "description": "How many times the panels beep (0-255). Left out: the display's default, or else 1."
+        },
+        "ascii": {
+          "name": "ASCII",
+          "description": "On: 16 ASCII characters per line. Off: 8 characters of any kind. Left out: the display's default, or else ASCII when the text allows it."
+        }
+      }
+    }
   }
 }

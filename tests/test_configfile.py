@@ -215,8 +215,13 @@ def test_write_to_missing_directory_reports_error(tmp_path):
 
 def test_editable_fields_per_type():
     assert configfile.editable_fields("RELAY") == ("number", "description", "hatype", "area", "pulse_ms")
-    assert configfile.editable_fields("SENSOR") == (
+    assert configfile.editable_fields("SENSOR")[:6] == (
         "number", "description", "area", "type", "decimals", "ha_unit_of_measurement",
+    )
+    assert "pulses_per_unit" in configfile.editable_fields("SENSOR")
+    assert configfile.editable_fields("DISPLAYMESSAGE") == (
+        "number", "description", "area",
+        "bus_numbers", "address_numbers", "message_type", "message_beeps", "ascii",
     )
     assert configfile.editable_fields("INPUT") == ("number", "description", "area")
     assert set(configfile.TYPE_LABELS) == set(configfile.KNOWN_COMPONENT_TYPES)
@@ -297,3 +302,49 @@ def test_real_config_survives_editor_round_trip(name):
     assert {k: v for k, v in reparsed.items() if k != "componentsTypes"} == {
         k: v for k, v in original.items() if k != "componentsTypes"
     }
+
+
+# ----------------------------------------------------------------------
+# New component types
+# ----------------------------------------------------------------------
+
+def _with(type_name, *components):
+    return {"componentsTypes": {type_name: list(components)}}
+
+
+def test_display_message_accepts_full_config():
+    configfile.validate_config(_with("DISPLAYMESSAGE", {
+        "number": 1000, "bus_numbers": "1,1", "address_numbers": "13,5",
+        "description": "Aurus living room + aurus basement",
+        "message_type": "message", "message_beeps": 2, "ascii": True,
+    }))
+    # Without targets: every display.
+    configfile.validate_config(_with("DISPLAYMESSAGE", {"number": 1}))
+
+
+@pytest.mark.parametrize("comp,fragment", [
+    ({"number": 1, "bus_numbers": "1,1", "address_numbers": "13"}, "same number"),
+    ({"number": 1, "bus_numbers": "1", "address_numbers": "x"}, "comma-separated"),
+    ({"number": 1, "bus_numbers": "1"}, "comma-separated"),
+    ({"number": 1, "message_type": "shout"}, "message_type"),
+    ({"number": 1, "message_beeps": 300}, "message_beeps"),
+])
+def test_display_message_validation(comp, fragment):
+    with pytest.raises(configfile.ConfigFileError) as err:
+        configfile.validate_config(_with("DISPLAYMESSAGE", comp))
+    assert fragment in err.value.detail
+
+
+def test_access_must_be_number_1():
+    configfile.validate_config(_with("ACCESS", {"number": 1}))
+    with pytest.raises(configfile.ConfigFileError):
+        configfile.validate_config(_with("ACCESS", {"number": 2}))
+
+
+def test_editor_round_trips_booleans_and_lists():
+    comps = [{"number": 1, "description": "Hall", "bus_numbers": [1, 2], "address_numbers": [3, 4], "ascii": True}]
+    items, extras = configfile.split_for_editor("DISPLAYMESSAGE", comps)
+    assert items[0]["ascii"] == "true"
+    assert items[0]["bus_numbers"] == "1, 2"
+    merged = configfile.merge_from_editor(items, extras)
+    assert merged[0]["ascii"] is True

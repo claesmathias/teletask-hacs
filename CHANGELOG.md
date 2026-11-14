@@ -1,5 +1,55 @@
 # Changelog
 
+## [1.8.0] — 2026-11-14
+
+Checked against the protocol documents in `docs/`: TDS LIBRARY V3.4 and V3.7
+(classic protocol, what a PICOS/MICROS+ speaks) and TDS15132 DoIP API (2026).
+Where they disagree, the library documents win.
+
+### Fixed
+- **Timed functions sent key presses.** `TIMEDFNC` used function code 52,
+  which is the push-button function (`FNC_TPKEY`): switching a timed function
+  simulated a key press. It now uses 5.
+- **Push buttons (`INPUT`) never reported.** They used function code 62,
+  which doesn't exist; they now use 52. A short press no longer leaves the
+  binary sensor on forever: it shows on for one second.
+- Existing `INPUT` and `TIMEDFNC` entities and devices are moved to the new
+  codes on update (config entry migration); entity IDs stay the same.
+- **Humidity, light, gas and pulse-counter sensors were decoded as
+  temperatures.** Each sensor type now has its own conversion (humidity in %,
+  logarithmic lux, analog range for gas, pulse counter real-time value).
+  Sensor error values show as unknown. `decimals` now sets the display
+  precision.
+
+### Added
+- **Display messages** (`DISPLAYMESSAGE`): a
+  `notify` entity per set of touch panels. `notify.send_message` spreads the
+  text over both lines (a title becomes line 1); the new
+  `teletask.send_display_message` action also sets message/alarm, beeps and
+  the character set.
+- **Climate zones**: a `SENSOR` with `type: TEMPERATURECONTROL` gets a
+  `climate` entity (target, day/night/standby/frost presets, heat/cool/auto
+  and more modes, optional fan speeds, on/off) and `number` entities for the
+  preset temperatures.
+- **Audio zones** (`AUDIO`) as `media_player`: power, volume steps, mute,
+  named sources, next/previous preset, now-playing text.
+- **Push-button events**: an `event` entity per `INPUT` with `short_press`,
+  `long_press` and `release`.
+- **Process and service functions** (`PROCES`, `SERVICE`) as switches.
+- **Motors**: optional slat tilt (`"tilt": true`) and sun protection switch
+  (`"sun_protection": true`); sun/wind protection, requested position and
+  time to finish as attributes.
+- **Pulse counter totals**: with `pulses_per_unit`, a *… total* sensor.
+- **DoIP-only types** (PROSOFT 5, not yet tried on a real central):
+  `DIMMERGRP`, `MOTORGRP`, `RGB`/`RGBGRP`, `TW`/`TWGRP` (tunable white),
+  `ALARM`, `DIGITALINPUT` and `ACCESS` (badge reader events).
+- The component editor knows all new types and their fields.
+- `tests/ha`: setup tests in a real Home Assistant against a fake central.
+
+### Changed
+- The offline test suite no longer waits 2 seconds per test; only the live
+  central tests do (5 minutes → under a second).
+
 ## [1.7.0] — 2026-11-07
 
 ### Added

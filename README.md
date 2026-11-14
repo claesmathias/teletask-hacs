@@ -7,8 +7,6 @@
 A **native** Home Assistant custom integration for [Teletask](https://www.teletask.be/) domotics central units.  
 Connects directly over TCP — **no MQTT broker, no Java bridge, no Docker container required**.
 
-> Inspired by the excellent [jeletask](https://github.com/ridiekel/jeletask) project, this integration implements the same Teletask binary TCP protocol natively inside Home Assistant.
-
 ---
 
 ## Supported platforms
@@ -27,11 +25,27 @@ Connects directly over TCP — **no MQTT broker, no Java bridge, no Docker conta
 | `TIMEDMOOD` | `scene` | `scene` | Activate only |
 | `TIMEDMOOD` | `switch` | `switch` | On/off toggle |
 | `FLAG` | `switch` | `switch` or `input_boolean` | Boolean flag |
-| `SENSOR` | `sensor` | *(always sensor)* | Temperature, humidity, light, gas, pulse counter |
+| `SENSOR` | `sensor` | *(always sensor)* | Temperature, humidity, light, gas, pulse counter (+ total) |
+| `SENSOR` with `type: TEMPERATURECONTROL` | `climate` + `number` + `sensor` | — | Climate zone: target, presets, mode, fan speed, on/off; preset temperatures |
 | `COND` | `binary_sensor` | *(always binary sensor)* | Teletask condition |
-| `INPUT` | `binary_sensor` | *(always binary sensor)* | Digital inputs / buttons with press-type attributes |
+| `INPUT` | `binary_sensor` + `event` | — | Push buttons on interfaces: short press, long press, release |
 | `TIMEDFNC` | `switch` | `switch` | On/off toggle |
 | `TIMEDFNC` | `scene` | `scene` | Activate only (pulse/trigger) |
+| `PROCES`, `SERVICE` | `switch` | — | Process and service functions |
+| `AUDIO` | `media_player` | — | On/off, volume steps, mute, 8 named sources, presets |
+| `DISPLAYMESSAGE` | `notify` | — | Text on the touch panels, as message or alarm, with beeps |
+
+Only on centrals that speak the newer **DoIP protocol** (PROSOFT 5, TDS15132 API 2026); a PICOS or MICROS+ on the classic protocol doesn't have them:
+
+| Teletask component | HA platform | Notes |
+|---|---|---|
+| `DIMMERGRP` | `light` | Dimmer group |
+| `MOTORGRP` | `cover` | Motor group |
+| `RGB`, `RGBGRP` | `light` | RGB colour |
+| `TW`, `TWGRP` | `light` | Tunable white: colour temperature and brightness |
+| `ALARM` | `switch` | On/off, with the alarm's beeps and text as attributes |
+| `DIGITALINPUT` | `binary_sensor` | Wired digital input, on = HIGH |
+| `ACCESS` | `event` | Badge reader: allowed / denied, card id, user, reader |
 
 ---
 
@@ -149,7 +163,7 @@ Every load checks the configuration first. JSON syntax errors are reported with 
 
 ## config.json reference
 
-The file follows the same structure as [jeletask](https://github.com/ridiekel/jeletask).
+The file has one list of components per component type.
 
 ### Top-level structure
 
@@ -246,6 +260,17 @@ Supported features:
 - **Stop**
 - **Set position** 0–100 (100 = fully open)
 
+Optional fields:
+
+| Field | Description |
+|---|---|
+| `"tilt": true` | Adds tilt control for slats (DoIP `SET_SLAT_POSITION`). The central doesn't report the slat position, so HA shows the last value you set. |
+| `"sun_protection": true` | Adds a *… sun protection* switch on the motor's device (`MOTOR_SUN_PROTECTION`). |
+
+The cover's attributes show the central's `sun_protection` and `wind_protection` state, the `requested_position` and `seconds_to_finish` while it runs.
+
+`MOTORGRP` (DoIP) works the same way for motor groups.
+
 ---
 
 ### LOCMOOD / GENMOOD / TIMEDMOOD
@@ -303,33 +328,53 @@ Sensors require a `type` field to select the correct device class and unit.
 |---|---|---|
 | `TEMPERATURE` | `temperature` | `°C` |
 | `HUMIDITY` | `humidity` | `%` |
-| `LIGHT` | `illuminance` | `lx` |
-| `GAS` | *(none)* | *(none)* |
-| `PULSECOUNTER` | `energy` | *(none)* |
-| `TEMPERATURECONTROL` | `temperature` | `°C` |
+| `LIGHT` | `illuminance` | `lx` (converted from the central's logarithmic value) |
+| `GAS` | *(none)* | set `ha_unit_of_measurement` |
+| `PULSECOUNTER` | *(none)* | real-time value; set `ha_unit_of_measurement` (e.g. `W`) |
+| `TEMPERATURECONTROL` | `temperature` | `°C`, plus a climate entity (see below) |
 
 | Field | Description |
 |---|---|
-| `decimals` | Number of decimal places the central sends (informational, used by some central types) |
+| `decimals` | Decimal places to show in HA |
 | `ha_unit_of_measurement` | Override the default unit shown in HA (e.g. `"°C"`, `"%"`) |
+| `gas_type`, `gas_min`, `gas_max` | `GAS` only: the analog input range (`4-20ma`, `0-20ma`, `0-10v`, `5-10v`) and the values at its bottom and top. Without them HA shows the raw value. |
+| `pulses_per_unit`, `total_unit_of_measurement` | `PULSECOUNTER` only: adds a *… total* sensor with the count since midnight (or the last 24 h, per PROSOFT) divided by the pulses per unit, e.g. `1000` and `"kWh"`. |
+
+Sensor values at or above the central's error value (`0x3F00`) show as *unknown*.
+
+#### Climate zones (`TEMPERATURECONTROL`)
+
+In the classic protocol a climate zone *is* a sensor zone: the same report has the measured temperature, the target, the day/night/standby presets, the active preset, mode, fan speed and on/off. A `SENSOR` with `"type": "TEMPERATURECONTROL"` gets:
+
+- a **`climate`** entity: target temperature (0.5 °C steps), presets `day` / `night` / `standby` / `frost`, on/off, and heat/cool/auto modes; with `"fan": true` also fan speeds low/medium/high/auto;
+- **`number`** entities (configuration) for the day preset, night preset and night preset when cooling (the last one is disabled by default);
+- the temperature **`sensor`**, as before.
+
+```json
+{ "number": 2, "description": "Living Room", "type": "TEMPERATURECONTROL", "hvac_modes": "heat,cool,auto", "fan": false }
+```
+
+| Field | Description |
+|---|---|
+| `hvac_modes` | Modes the zone supports, comma-separated: `heat`, `cool`, `auto`, `fan_only` (vent), `dry`. Default `heat,cool,auto`. Off is always there. |
+| `fan` | `true` if the zone has fan speeds |
+
+Setting a mode, preset or fan speed on a zone that is off switches it on first.
 
 ---
 
 ### INPUT
 
-Digital inputs (buttons, door contacts, motion detectors) become `binary_sensor` entities.
+Push buttons on Teletask interfaces (keypads, touch panels): `FNC_TPKEY`, function 52. Each gets two entities:
+
+- an **`event`** entity *… press* with the event types `short_press`, `long_press` (button held) and `release` (end of a long press). Use it for automations.
+- a **`binary_sensor`** that is on while the button is held. A short press has no release report, so it shows as on for one second.
 
 ```json
-{ "number": 42, "description": "Front Doorbell",   "area": "Entry Hall" },
-{ "number": 43, "description": "Front Door Contact","area": "Entry Hall" }
+{ "number": 42, "description": "Front Doorbell", "area": "Entry Hall" }
 ```
 
-The sensor is `on` when the input is active (CLOSED, SHORT_PRESS, or LONG_PRESS). Two extra state attributes are available for automations:
-
-| Attribute | Description |
-|---|---|
-| `raw_state` | Raw state string: `OPEN`, `CLOSED`, `SHORT_PRESS`, `LONG_PRESS` |
-| `press_duration_millis` | Duration of the press in milliseconds (when available) |
+States the central replays when the integration (re)connects are not reported as presses.
 
 **Example — react differently to short vs long press:**
 
@@ -337,25 +382,32 @@ The sensor is `on` when the input is active (CLOSED, SHORT_PRESS, or LONG_PRESS)
 alias: Staircase light — short/long press
 triggers:
   - trigger: state
-    entity_id: binary_sensor.teletask_my_teletask_62_42
-    to: "on"
+    entity_id: event.front_doorbell_press
 actions:
   - choose:
       - conditions:
-          - condition: template
-            value_template: "{{ trigger.to_state.attributes.raw_state == 'SHORT_PRESS' }}"
+          - condition: state
+            entity_id: event.front_doorbell_press
+            attribute: event_type
+            state: short_press
         sequence:
-          - service: light.toggle
+          - action: light.toggle
             target:
               entity_id: light.staircase
       - conditions:
-          - condition: template
-            value_template: "{{ trigger.to_state.attributes.raw_state == 'LONG_PRESS' }}"
+          - condition: state
+            entity_id: event.front_doorbell_press
+            attribute: event_type
+            state: long_press
         sequence:
-          - service: scene.turn_on
+          - action: scene.turn_on
             target:
               entity_id: scene.all_off
 ```
+
+> Before 1.8.0, `INPUT` used function code 62, which doesn't exist, so inputs never reported anything. Existing entities are moved to the right code when you update; their entity IDs stay the same.
+
+For a wired digital input on a DoIP central (HIGH/LOW), use `DIGITALINPUT` instead.
 
 ---
 
@@ -377,6 +429,106 @@ Timed functions can be `switch` (on/off) or `scene` (activate/pulse only).
 { "number": 3, "description": "Staircase Timer", "hatype": "switch" },
 { "number": 4, "description": "Hallway Pulse",   "hatype": "scene"  }
 ```
+
+> Before 1.8.0, timed functions were sent with function code 52, which is the push-button function: switching one simulated a key press instead. They now use code 5. Existing entities keep their entity IDs.
+
+---
+
+### PROCES / SERVICE
+
+Process functions and service functions become switches.
+
+```json
+"PROCES":  [ { "number": 1, "description": "Pool Pump" } ],
+"SERVICE": [ { "number": 1, "description": "Cleaning Mode" } ]
+```
+
+---
+
+### AUDIO
+
+Audio zones become `media_player` entities: on/off, volume up/down, mute (a toggle; the central doesn't report it), source select, and next/previous preset. Volume, the active source and the now-playing text are shown when the central reports them.
+
+```json
+{ "number": 1, "description": "Kitchen Audio", "sources": "Radio, Spotify, TV" }
+```
+
+| Field | Description |
+|---|---|
+| `sources` | Names of sources 1, 2, … in order. Only the named sources are listed; without names, *Source 1* to *Source 8*. |
+
+---
+
+### DISPLAYMESSAGE
+
+Shows text on the touch panels (AURUS and others): two lines, as a **message** or an **alarm**, with a number of beeps. Each `DISPLAYMESSAGE` is one set of panels and becomes a `notify` entity. It is send-only: what is on a display can't be read back.
+
+```json
+"DISPLAYMESSAGE": [
+  { "number": 1, "description": "Living room + basement panels",
+    "bus_numbers": "1,1", "address_numbers": "13,5",
+    "message_type": "message", "message_beeps": 2 },
+  { "number": 2, "description": "All panels", "message_type": "alarm", "message_beeps": 5 }
+]
+```
+
+| Field | Description |
+|---|---|
+| `bus_numbers`, `address_numbers` | Bus number and interface address of each panel, comma-separated, in the same order. Left out: all panels. |
+| `message_type` | Default `message` or `alarm` (default `alarm`) |
+| `message_beeps` | Default number of beeps, 0–255 (default 1) |
+| `ascii` | `true`: 16 ASCII characters per line. `false`: 8 characters of any kind (accents, symbols). Left out: ASCII when the text allows it. |
+
+**Send from an automation:**
+
+```yaml
+# One text, spread over both lines (breaks at a space, or after - – — /)
+- action: notify.send_message
+  target:
+    entity_id: notify.living_room_basement_panels
+  data:
+    message: "Someone is at the front door"
+
+# Title = line 1, message = line 2
+- action: notify.send_message
+  target:
+    entity_id: notify.all_panels
+  data:
+    title: "Washer"
+    message: "Finished"
+
+# Full control: type, beeps and character set per message
+- action: teletask.send_display_message
+  target:
+    entity_id: notify.all_panels
+  data:
+    line1: "Garage open"
+    line2: "Close it?"
+    message_type: alarm
+    beeps: 3
+```
+
+Text that doesn't fit is cut off, with a warning in the log. The command (`0x04`) is in the TDS library documentation (V3.4 and V3.7); the 2026 DoIP API document doesn't list it.
+
+---
+
+### DoIP-only types
+
+These are only in the TDS15132 DoIP API (PROSOFT 5). The protocol layer follows that document, but they haven't been tried on a real central yet.
+
+```json
+"DIMMERGRP":    [ { "number": 1, "description": "Downstairs" } ],
+"MOTORGRP":     [ { "number": 1, "description": "All blinds" } ],
+"RGB":          [ { "number": 6, "description": "Kitchen strip" } ],
+"TW":           [ { "number": 7, "description": "Office" } ],
+"ALARM":        [ { "number": 6, "description": "Fire alarm" } ],
+"DIGITALINPUT": [ { "number": 1, "description": "Gate contact" } ],
+"ACCESS":       [ { "number": 1, "description": "Front door reader" } ]
+```
+
+- `RGB` / `RGBGRP`: the central only knows red, green and blue; HA's brightness is the strongest channel.
+- `TW` / `TWGRP`: colour temperature range from the central (default 2700–6500 K).
+- `ACCESS`: must be number 1 (the central reports all badge readers there). Each attempt is an `allowed` or `denied` event with `card_id`, `user`, `reader` and `timestamp`. In PROSOFT, select *PORTA* for the users that should be reported.
 
 ---
 
@@ -535,7 +687,7 @@ scene.teletask_my_teletask_9_1           → TIMEDMOOD #1
 scene.teletask_my_teletask_10_1          → GENMOOD #1
 switch.teletask_my_teletask_15_4         → FLAG #4
 sensor.teletask_my_teletask_20_3         → SENSOR #3
-binary_sensor.teletask_my_teletask_62_42 → INPUT #42
+binary_sensor.teletask_my_teletask_52_42 → INPUT #42
 binary_sensor.teletask_my_teletask_60_1  → COND #1
 ```
 
@@ -595,8 +747,9 @@ data:
 alias: Doorbell notification
 triggers:
   - trigger: state
-    entity_id: binary_sensor.teletask_my_teletask_62_42
-    to: "on"
+    entity_id: event.front_doorbell_press
+    attribute: event_type
+    to: short_press
 actions:
   - service: notify.mobile_app_your_phone
     data:
@@ -645,27 +798,24 @@ Outgoing commands (turn on/off, set brightness, etc.) use **optimistic updates**
 
 ---
 
-## Comparison with jeletask
-
-| Feature | jeletask (MQTT bridge) | This integration |
-|---|---|---|
-| MQTT broker required | Yes | No |
-| Java / Docker required | Yes | No |
-| HACS installable | Via custom repo | Yes |
-| Auto-discovery in HA | Via MQTT discovery | Native config flow |
-| Real-time updates | Yes (via MQTT) | Yes (direct TCP) |
-| Admin web interface | Yes | No (use HA UI) |
-| Config via file | `config.json` mounted in Docker | `/config/teletask/config.json` |
-| Area assignment | No | Yes (`"area"` field in config) |
-| Momentary relay button | No | Yes (`hatype: button` + `pulse_ms`) |
-| DISPLAYMESSAGE | Yes | Not yet |
-| TEMPERATURECONTROL (HVAC) | Yes | Not yet |
-
----
-
 ## Contributing
 
-Pull requests are welcome. To add support for `DISPLAYMESSAGE` or `TEMPERATURECONTROL (HVAC)`, the relevant protocol bytes are documented in [jeletask's MESSAGES.md](https://github.com/ridiekel/jeletask/blob/master/MESSAGES.md) and the [Teletask TDS15132 PDF](https://teletask.be/media/3109/tds15132-library.pdf).
+Pull requests are welcome. The protocol is documented in the PDFs in [docs/](docs/): *TDS LIBRARY* V3.4 and V3.7 (classic protocol, PICOS/MICROS+) and *TDS15132 DoIP API* (2026, PROSOFT 5). Where they disagree, the integration follows the library documents, which match what a PICOS sends.
+
+Function codes:
+
+| Code | Type | Code | Type |
+|---|---|---|---|
+| 1 | `RELAY` | 28 | `DIGITALINPUT` (DoIP) |
+| 2 | `DIMMER` | 31 | `AUDIO` |
+| 3 | `PROCES` | 40 | `MOTORGRP` (DoIP) |
+| 5 | `TIMEDFNC` | 41 / 217 | `RGBGRP` / `RGB` (DoIP) |
+| 6 | `MOTOR` | 42 / 220 | `TWGRP` / `TW` (DoIP) |
+| 8 / 9 / 10 | `LOCMOOD` / `TIMEDMOOD` / `GENMOOD` | 52 | `INPUT` (`FNC_TPKEY`) |
+| 13 | `DIMMERGRP` (DoIP) | 53 | `SERVICE` |
+| 15 | `FLAG` | 54 | `DISPLAYMESSAGE` |
+| 20 | `SENSOR` (and climate zone) | 59 / 60 | `ALARM` (DoIP) / `COND` |
+| | | 202 | `ACCESS` (DoIP) |
 
 ### Local development
 
@@ -697,7 +847,15 @@ integration with host `host.docker.internal`, port `55957`, and config file
 Offline unit tests (no HA or central needed):
 
 ```bash
-pytest tests/test_configfile.py tests/test_entities.py tests/test_webinfo.py
+pytest tests/test_protocol.py tests/test_configfile.py tests/test_entities.py tests/test_webinfo.py
+```
+
+Setup tests in a real Home Assistant against a fake central (Python 3.13, own
+session because `test_entities.py` stubs out Home Assistant):
+
+```bash
+pip install pytest-homeassistant-custom-component
+pytest tests/ha
 ```
 
 ---

@@ -18,7 +18,32 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .client import FunctionCode, TeletaskClient, TeletaskEvent, MOTOR_STOP, MOTOR_GO_TO_POSITION
+from .client import (
+    AUDIO_SOURCES,
+    MOTOR_GO_TO_POSITION,
+    MOTOR_SLAT_POSITION,
+    MOTOR_STOP,
+    MOTOR_SUN_PROTECTION,
+    REPORT_ONLY_FUNCTIONS,
+    RGB_COLOR,
+    STATE_OFF,
+    STATE_ON,
+    TEMP_MANUAL_TARGET,
+    TW_COLOR,
+    TW_UNCHANGED_BRIGHTNESS,
+    TW_UNCHANGED_KELVIN,
+    TYPE_FUNCTIONS,
+    WRITE_ONLY_FUNCTIONS,
+    FunctionCode,
+    TeletaskClient,
+    TeletaskEvent,
+    celsius_to_preset_byte,
+    celsius_to_short,
+    decode_sensor,
+    display_line_length,
+    display_targets,
+    wrap_display_text,
+)
 from .const import DOMAIN, SIGNAL_HUB_STATUS, SIGNAL_STATE_UPDATED
 from .webinfo import SERIAL_PATH, TIME_PATH, CentralInfo, parse_serial_page, parse_time_page
 
@@ -26,6 +51,18 @@ _LOGGER = logging.getLogger(__name__)
 
 RECONNECT_INTERVAL = 30  # seconds
 OUTAGE_ISSUE_DELAY = timedelta(minutes=5)  # disconnected this long → Repairs entry
+
+
+def _config_bool(value: Any) -> bool | None:
+    """true/false from config.json, also written as text; None when not set."""
+    if isinstance(value, bool) or value is None:
+        return value
+    text = str(value).strip().lower()
+    if text in ("true", "yes", "1", "ascii"):
+        return True
+    if text in ("false", "no", "0", "unicode"):
+        return False
+    return None
 
 
 def _format_duration(delta: timedelta) -> str:
@@ -82,6 +119,9 @@ class TeletaskHub:
         self.outage_since: datetime | None = None
         self._reconnect_attempts = 0
         self._cancel_outage_issue: CALLBACK_TYPE | None = None
+        # True while (re)subscribing: the central then replays current states,
+        # which event entities must not mistake for new presses.
+        self.resyncing = False
         self.web_coordinator: DataUpdateCoordinator[CentralWebData] = DataUpdateCoordinator(
             hass,
             _LOGGER,
@@ -203,19 +243,7 @@ class TeletaskHub:
 
     def _parse_config(self) -> None:
         component_types = self.config.get("componentsTypes", {})
-        function_map = {
-            "RELAY":     FunctionCode.RELAY,
-            "DIMMER":    FunctionCode.DIMMER,
-            "MOTOR":     FunctionCode.MOTOR,
-            "LOCMOOD":   FunctionCode.LOCMOOD,
-            "GENMOOD":   FunctionCode.GENMOOD,
-            "TIMEDMOOD": FunctionCode.TIMEDMOOD,
-            "FLAG":      FunctionCode.FLAG,
-            "SENSOR":    FunctionCode.SENSOR,
-            "COND":      FunctionCode.COND,
-            "INPUT":     FunctionCode.INPUT,
-            "TIMEDFNC":  FunctionCode.TIMEDFNC,
-        }
+        function_map = TYPE_FUNCTIONS
         for type_name, components in component_types.items():
             fn = function_map.get(type_name)
             if fn is None:
@@ -240,6 +268,13 @@ class TeletaskHub:
     # ------------------------------------------------------------------
 
     async def _subscribe_all(self) -> None:
+        self.resyncing = True
+        try:
+            await self._subscribe_all_inner()
+        finally:
+            self.resyncing = False
+
+    async def _subscribe_all_inner(self) -> None:
         _LOGGER.debug(
             "Subscribing %d components across %d function types",
             len(self._components),
@@ -248,14 +283,22 @@ class TeletaskHub:
         # Step 1: Subscribe per function type (LOG covers all components of that type).
         # The central also sends a "welcome" event with current state for each component.
         seen: set[int] = set()
-        for fn, _ in self._components:
-            if fn not in seen:
-                _LOGGER.debug("LOG subscribe fn=%d", fn)
-                await self._client.log_subscribe(fn)
-                seen.add(fn)
-                await asyncio.sleep(0.02)
+        for fn, number in self._components:
+            if fn in WRITE_ONLY_FUNCTIONS or fn in seen:
+                continue
+            seen.add(fn)
+            if fn in REPORT_ONLY_FUNCTIONS:
+                # Badge reports need the DoIP per-device subscription on 202/1;
+                # LOG is sent as well for centrals that only know the legacy one.
+                _LOGGER.debug("SUBSCRIBE fn=%d num=1", fn)
+                await self._client.subscribe_device(fn, 1)
+            _LOGGER.debug("LOG subscribe fn=%d", fn)
+            await self._client.log_subscribe(fn)
+            await asyncio.sleep(0.02)
         # Step 2: GROUPGET per component to guarantee an immediate state reply.
         for fn, number in self._components:
+            if not self.can_request_state(fn):
+                continue
             _LOGGER.debug("GROUPGET fn=%d num=%d", fn, number)
             await self._client.groupget(fn, number)
             await asyncio.sleep(0.02)
@@ -344,6 +387,13 @@ class TeletaskHub:
         self.last_event = dt_util.utcnow()
         async_dispatcher_send(self.hass, self.status_signal)
         key = (event.function, event.number)
+        if event.function == FunctionCode.SENSOR and event.raw and key in self._components:
+            # The report layout is the same for every sensor zone; how its
+            # values convert depends on the sensor type in config.json.
+            config = self._components[key].get("config", {})
+            decoded = decode_sensor(config.get("type", "TEMPERATURE"), event.raw, config)
+            if decoded is not None:
+                event.state = decoded
         prev = self._component_states.get(key)
         self._component_states[key] = event.state
         if prev != event.state:
@@ -402,32 +452,32 @@ class TeletaskHub:
         await self._client.set_state(FunctionCode.RELAY, number, 0xFF if state else 0x00)
         self._optimistic_update(FunctionCode.RELAY, number, {"state": "ON" if state else "OFF"})
 
-    async def async_set_dimmer(self, number: int, brightness: int) -> None:
+    async def async_set_dimmer(self, number: int, brightness: int, function: int = FunctionCode.DIMMER) -> None:
         # 103 = PREVIOUS_STATE (restore last brightness); all other values clamp to 0-100.
         if brightness != 103:
             brightness = max(0, min(100, brightness))
-        await self._client.set_state(FunctionCode.DIMMER, number, brightness)
+        await self._client.set_state(function, number, brightness)
         # Optimistic update: if PREVIOUS_STATE (103) we don't know the actual brightness,
         # so just mark as ON without changing the brightness value.
         if brightness == 103:
-            current = dict(self._component_states.get((FunctionCode.DIMMER, number), {}))
+            current = dict(self._component_states.get((function, number), {}))
             current["state"] = "ON"
-            self._optimistic_update(FunctionCode.DIMMER, number, current)
+            self._optimistic_update(function, number, current)
         else:
-            self._optimistic_update(FunctionCode.DIMMER, number, {
+            self._optimistic_update(function, number, {
                 "state": "ON" if brightness > 0 else "OFF",
                 "brightness": brightness,
             })
 
-    async def async_set_motor(self, number: int, direction: str) -> None:
+    async def async_set_motor(self, number: int, direction: str, function: int = FunctionCode.MOTOR) -> None:
         # STOP=3 per Teletask protocol (SET_MTRSTOP=3, not 0)
         param = {"UP": 1, "DOWN": 2, "STOP": MOTOR_STOP}.get(direction.upper(), MOTOR_STOP)
-        await self._client.set_state(FunctionCode.MOTOR, number, param)
+        await self._client.set_state(function, number, param)
 
-    async def async_set_motor_position(self, number: int, position: int) -> None:
+    async def async_set_motor_position(self, number: int, position: int, function: int = FunctionCode.MOTOR) -> None:
         position = max(0, min(100, position))
         # MOTOR_GO_TO_POSITION=11 with position percentage as extra byte
-        await self._client.set_state(FunctionCode.MOTOR, number, MOTOR_GO_TO_POSITION, position)
+        await self._client.set_state(function, number, MOTOR_GO_TO_POSITION, position)
 
     async def async_set_mood(self, function: int, number: int, state: bool) -> None:
         await self._client.set_state(function, number, 0xFF if state else 0x00)
@@ -441,8 +491,141 @@ class TeletaskHub:
         await self._client.set_state(FunctionCode.TIMEDFNC, number, 0xFF if state else 0x00)
         self._optimistic_update(FunctionCode.TIMEDFNC, number, {"state": "ON" if state else "OFF"})
 
+    async def async_set_onoff(self, function: int, number: int, state: bool) -> None:
+        """ON/OFF for any single-byte function (process, service, alarm, ...)."""
+        await self._client.set_state(function, number, STATE_ON if state else STATE_OFF)
+        self._optimistic_update(function, number, {
+            **self._component_states.get((function, number), {}),
+            "state": "ON" if state else "OFF",
+        })
+
+    # Motors -------------------------------------------------------------
+
+    async def async_set_motor_tilt(self, function: int, number: int, position: int) -> None:
+        await self._client.set_state(function, number, MOTOR_SLAT_POSITION, max(0, min(100, position)))
+
+    async def async_set_motor_sun_protection(self, function: int, number: int, on: bool) -> None:
+        await self._client.set_state(function, number, MOTOR_SUN_PROTECTION, STATE_ON if on else STATE_OFF)
+
+    # Climate (sensor zone) ----------------------------------------------
+
+    async def async_climate_command(self, number: int, setting: int, *data: int) -> None:
+        await self._client.set_state(FunctionCode.SENSOR, number, setting, *data)
+
+    async def async_climate_set_target(self, number: int, celsius: float) -> None:
+        value = celsius_to_short(celsius)
+        await self._client.set_state(
+            FunctionCode.SENSOR, number, TEMP_MANUAL_TARGET, (value >> 8) & 0xFF, value & 0xFF
+        )
+        self.optimistic_merge(FunctionCode.SENSOR, number, {"target_temperature": celsius})
+
+    async def async_climate_set_preset_temperature(self, number: int, setting: int, key: str, celsius: float) -> None:
+        await self._client.set_state(FunctionCode.SENSOR, number, setting, celsius_to_preset_byte(celsius))
+        self.optimistic_merge(FunctionCode.SENSOR, number, {key: celsius})
+
+    # Audio -----------------------------------------------------------------
+
+    async def async_audio_command(self, number: int, setting: int) -> None:
+        await self._client.set_state(FunctionCode.AUDIO, number, setting)
+
+    async def async_audio_select_source(self, number: int, source: int) -> None:
+        setting = AUDIO_SOURCES.get(source)
+        if setting is None:
+            raise ValueError(f"Audio source must be 1-8, got {source}")
+        await self._client.set_state(FunctionCode.AUDIO, number, setting)
+        self.optimistic_merge(FunctionCode.AUDIO, number, {"state": "ON", "source": source})
+
+    # RGB / tunable white -----------------------------------------------
+
+    async def async_set_rgb(self, function: int, number: int, rgb: tuple[int, int, int]) -> None:
+        r, g, b = (max(0, min(255, int(c))) for c in rgb)
+        await self._client.set_state(function, number, RGB_COLOR, r, g, b)
+        self.optimistic_merge(function, number, {"state": "ON" if (r or g or b) else "OFF", "rgb": [r, g, b]})
+
+    async def async_set_tw(
+        self, function: int, number: int, kelvin: int | None = None, brightness: int | None = None
+    ) -> None:
+        k = TW_UNCHANGED_KELVIN if kelvin is None else max(0, min(0xFEFD, int(kelvin)))
+        level = TW_UNCHANGED_BRIGHTNESS if brightness is None else max(0, min(100, int(brightness)))
+        await self._client.set_state(function, number, TW_COLOR, (k >> 8) & 0xFF, k & 0xFF, level)
+        changes: dict[str, Any] = {}
+        if kelvin is not None:
+            changes["kelvin"] = k
+        if brightness is not None:
+            changes["brightness"] = level
+            changes["state"] = "ON" if level > 0 else "OFF"
+        self.optimistic_merge(function, number, changes)
+
+    # Display messages ---------------------------------------------------
+
+    async def async_display_message(
+        self,
+        number: int,
+        *,
+        message: str | None = None,
+        line1: str | None = None,
+        line2: str | None = None,
+        message_type: str | None = None,
+        beeps: int | None = None,
+        ascii_mode: bool | None = None,
+    ) -> None:
+        """Show text on the displays of a DISPLAYMESSAGE component.
+
+        Either ``message`` (spread over both lines) or ``line1``/``line2``.
+        Leaving out the type, beeps or ascii takes the component's default
+        from config.json; without one, ascii is chosen when all text is ASCII.
+        """
+        comp = self._components.get((FunctionCode.DISPLAYMESSAGE, number))
+        if comp is None:
+            raise ValueError(f"Unknown display message {number}")
+        cfg = comp.get("config", {})
+        texts = [t for t in (message, line1, line2) if t]
+        if ascii_mode is None:
+            ascii_mode = _config_bool(cfg.get("ascii"))
+        if ascii_mode is None:
+            ascii_mode = all(t.isascii() for t in texts)
+        ascii_mode = bool(ascii_mode)
+        if message is not None:
+            line1, line2 = wrap_display_text(message, display_line_length(ascii_mode))
+        line1, line2 = line1 or "", line2 or ""
+        length = display_line_length(ascii_mode)
+        for index, line in ((1, line1), (2, line2)):
+            if len(line) > length:
+                _LOGGER.warning(
+                    "Display message %s line %d %r has %d characters, the display shows %d: cut to %r",
+                    number, index, line, len(line), length, line[:length],
+                )
+        if message_type is None:
+            message_type = cfg.get("message_type", "alarm")
+        if beeps is None:
+            beeps = cfg.get("message_beeps", 1)
+        beeps = int(beeps)
+        if not 0 <= beeps <= 255:
+            _LOGGER.warning("Display message %s asks for %d beeps; the display can do 0 to 255", number, beeps)
+        buses, addresses = display_targets(cfg)
+        await self._client.display_message(
+            buses, addresses, line1, line2,
+            is_message=str(message_type).lower() == "message",
+            ascii_mode=ascii_mode,
+            beeps=beeps,
+        )
+
+    # ------------------------------------------------------------------
+
+    def optimistic_merge(self, function: int, number: int, changes: dict) -> None:
+        if changes:
+            self._optimistic_update(
+                function, number, {**self._component_states.get((function, number), {}), **changes}
+            )
+
+    @staticmethod
+    def can_request_state(function: int) -> bool:
+        return function not in WRITE_ONLY_FUNCTIONS and function not in REPORT_ONLY_FUNCTIONS
+
     async def async_request_state(self, function: int, number: int) -> None:
         """Send a GET to the central; the response arrives via dispatcher signal."""
+        if not self.can_request_state(function):
+            return
         await self._client.get_state(function, number)
 
     # ------------------------------------------------------------------

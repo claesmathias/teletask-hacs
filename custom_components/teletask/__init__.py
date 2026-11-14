@@ -13,6 +13,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 
 from .configfile import ConfigFileError, read_config_file
 from .const import (
@@ -36,7 +37,16 @@ PLATFORMS = [
     Platform.SENSOR,
     Platform.BINARY_SENSOR,
     Platform.SCENE,
+    Platform.CLIMATE,
+    Platform.NUMBER,
+    Platform.MEDIA_PLAYER,
+    Platform.NOTIFY,
+    Platform.EVENT,
 ]
+
+# Function codes corrected in 1.8.0 (config entry minor version 2), in the
+# order they must be renamed: old 52 is freed before 62 moves onto it.
+_FUNCTION_CODE_FIXES = ((52, 5), (62, 52))  # TIMEDFNC, then INPUT
 
 
 def _apply_log_level(entry: ConfigEntry) -> None:
@@ -74,6 +84,40 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = hub
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    return True
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Move entities and devices of push buttons and timed functions to the right codes.
+
+    Before 1.8.0, INPUT used function 62 (which doesn't exist) and TIMEDFNC 52
+    (the push-button function). The codes are part of the unique ids, so the
+    ids are renamed instead of leaving orphaned entities behind.
+    """
+    if entry.version > 1:
+        return False
+    if entry.minor_version < 2:
+        central_id = entry.data[CONF_CENTRAL_ID]
+        ent_reg = er.async_get(hass)
+        dev_reg = dr.async_get(hass)
+        for old, new in _FUNCTION_CODE_FIXES:
+            old_prefix = f"teletask_{central_id}_{old}_"
+            for entity in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
+                if entity.unique_id.startswith(old_prefix):
+                    new_id = f"teletask_{central_id}_{new}_" + entity.unique_id[len(old_prefix):]
+                    if ent_reg.async_get_entity_id(entity.domain, entity.platform, new_id) is None:
+                        ent_reg.async_update_entity(entity.entity_id, new_unique_id=new_id)
+            old_dev = f"{central_id}_{old}_"
+            for device in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
+                identifiers = {
+                    (domain, f"{central_id}_{new}_" + ident[len(old_dev):])
+                    if domain == DOMAIN and ident.startswith(old_dev) else (domain, ident)
+                    for domain, ident in device.identifiers
+                }
+                if identifiers != device.identifiers:
+                    dev_reg.async_update_device(device.id, new_identifiers=identifiers)
+        hass.config_entries.async_update_entry(entry, minor_version=2)
+        _LOGGER.info("Migrated Teletask entry %s to minor version 2", entry.title)
     return True
 
 

@@ -1,0 +1,33 @@
+send_display_message:
+  target:
+    entity:
+      integration: teletask
+      domain: notify
+  fields:
+    message:
+      example: "Someone is at the front door"
+      selector:
+        text:
+    line1:
+      example: "DOORBELL"
+      selector:
+        text:
+    line2:
+      example: "PLEASE OPEN!"
+      selector:
+        text:
+    message_type:
+      selector:
+        select:
+          options:
+            - message
+            - alarm
+    beeps:
+      selector:
+        number:
+          min: 0
+          max: 255
+          mode: box
+    ascii:
+      selector:
+        boolean:

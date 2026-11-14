@@ -23,6 +23,7 @@ from .configfile import (
     BACKUP_SUFFIX,
     HATYPE_OPTIONS,
     KNOWN_COMPONENT_TYPES,
+    GAS_TYPES,
     SENSOR_TYPES,
     TYPE_LABELS,
     ConfigFileError,
@@ -70,6 +71,8 @@ class TeletaskConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Step 1: host / port / central_id. Step 2: path to config.json."""
 
     VERSION = 1
+    # 2: INPUT 62→52 and TIMEDFNC 52→5; entity and device ids migrated in __init__.
+    MINOR_VERSION = 2
 
     def __init__(self) -> None:
         self._connection_data: dict[str, Any] = {}
@@ -294,6 +297,70 @@ class TeletaskOptionsFlow(config_entries.OptionsFlow):
             fields["decimals"] = {"label": "Decimals", "selector": {"text": {}}}
             fields["ha_unit_of_measurement"] = {
                 "label": "Unit (overrides the default)", "selector": {"text": {}},
+            }
+            fields["gas_type"] = {
+                "label": "Analog input range (gas sensors)",
+                "selector": {"select": {"options": list(GAS_TYPES), "mode": "dropdown"}},
+            }
+            fields["gas_min"] = {"label": "Value at the bottom of the range (gas)", "selector": {"number": {"mode": "box", "step": "any"}}}
+            fields["gas_max"] = {"label": "Value at the top of the range (gas)", "selector": {"number": {"mode": "box", "step": "any"}}}
+            fields["pulses_per_unit"] = {
+                "label": "Pulses per unit (pulse counters)",
+                "selector": {"number": {"min": 1, "mode": "box", "step": "any"}},
+            }
+            fields["total_unit_of_measurement"] = {
+                "label": "Unit of the total (pulse counters), e.g. kWh", "selector": {"text": {}},
+            }
+            fields["hvac_modes"] = {
+                "label": "Climate modes, comma-separated: heat, cool, auto, fan_only, dry (climate zones)",
+                "selector": {"text": {}},
+            }
+        yes_no = [{"value": "true", "label": "Yes"}, {"value": "false", "label": "No"}]
+        if type_name == "SENSOR":
+            fields["fan"] = {
+                "label": "Has fan speeds (climate zones)",
+                "selector": {"select": {"options": yes_no, "mode": "dropdown"}},
+            }
+        if type_name in ("MOTOR", "MOTORGRP"):
+            fields["tilt"] = {
+                "label": "Has slats (tilt control, DoIP)",
+                "selector": {"select": {"options": yes_no, "mode": "dropdown"}},
+            }
+            fields["sun_protection"] = {
+                "label": "Sun protection switch",
+                "selector": {"select": {"options": yes_no, "mode": "dropdown"}},
+            }
+        if type_name == "AUDIO":
+            fields["sources"] = {
+                "label": "Source names, comma-separated (source 1, 2, ...)",
+                "selector": {"text": {}},
+            }
+        if type_name == "DISPLAYMESSAGE":
+            fields["bus_numbers"] = {
+                "label": "Bus numbers, comma-separated (empty: all displays)",
+                "selector": {"text": {}},
+            }
+            fields["address_numbers"] = {
+                "label": "Interface addresses, same order as the buses",
+                "selector": {"text": {}},
+            }
+            fields["message_type"] = {
+                "label": "Default type",
+                "selector": {"select": {"options": [
+                    {"value": "message", "label": "Message"},
+                    {"value": "alarm", "label": "Alarm"},
+                ], "mode": "dropdown"}},
+            }
+            fields["message_beeps"] = {
+                "label": "Default number of beeps",
+                "selector": {"number": {"min": 0, "max": 255, "step": 1, "mode": "box"}},
+            }
+            fields["ascii"] = {
+                "label": "Character set (empty: ASCII when the text allows it)",
+                "selector": {"select": {"options": [
+                    {"value": "true", "label": "ASCII, 16 characters per line"},
+                    {"value": "false", "label": "Any character, 8 per line"},
+                ], "mode": "dropdown"}},
             }
         return fields
 

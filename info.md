@@ -2,7 +2,7 @@
 
 Control your **Teletask domotics** system directly from Home Assistant — no MQTT broker, no Java bridge, no Docker container required.
 
-This integration connects over TCP directly to your Teletask central unit (MICROS+, NANOS, PICOS) using the same binary protocol as the popular [jeletask](https://github.com/ridiekel/jeletask) project, but entirely natively inside Home Assistant.
+This integration connects over TCP directly to your Teletask central unit (MICROS+, NANOS, PICOS) using the Teletask binary protocol, entirely natively inside Home Assistant.
 
 ---
 
@@ -12,8 +12,11 @@ This integration connects over TCP directly to your Teletask central unit (MICRO
 - 🪟 **Covers** — motors/blinds with position, UP/DOWN/STOP
 - 🎭 **Scenes** — local moods, general moods, timed moods
 - 🌡️ **Sensors** — temperature, humidity, light, gas, pulse counter
-- 🔘 **Switches** — relays, flags, timed functions
-- 🔲 **Binary sensors** — digital inputs (buttons), conditions
+- 🔥 **Climate** — climate zones with target, presets, mode and fan speed
+- 💬 **Display messages** — text and alarms on the touch panels, via `notify`
+- 🔊 **Audio zones** — power, volume, sources
+- 🔘 **Switches** — relays, flags, timed, process and service functions
+- 🔲 **Binary sensors & events** — push buttons (short/long press), conditions
 - ⚡ **Real-time push updates** — no polling, instant state changes
 - 🔌 **Auto-reconnect** — recovers automatically from network drops
 
