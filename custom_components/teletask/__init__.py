@@ -3,9 +3,6 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
-
-import voluptuous as vol
 
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry

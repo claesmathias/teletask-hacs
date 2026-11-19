@@ -376,6 +376,10 @@ def _display_line_bytes(text: str, ascii_mode: bool) -> bytes:
     return encoded
 
 
+class TeletaskNotConnectedError(Exception):
+    """A command could not be sent because the central is not connected."""
+
+
 class TeletaskClient:
     """Async TCP client for the Teletask binary protocol."""
 
@@ -398,13 +402,17 @@ class TeletaskClient:
         self._keep_alive_task: asyncio.Task | None = None
         self._receive_task: asyncio.Task | None = None
         self._subscribed_components: list[tuple[int, int]] = []
-        self.last_error: str | None = None  # reason of the last failed connect()
+        self.last_error: str | None = None  # why the last connect failed or the connection dropped
 
     # ------------------------------------------------------------------
     # Connection
     # ------------------------------------------------------------------
 
     async def connect(self) -> bool:
+        # A reconnect starts clean: no keep-alive loop or socket of the old
+        # connection may carry over into the new one.
+        self._stop_tasks()
+        self._close_writer()
         try:
             self._reader, self._writer = await asyncio.wait_for(
                 asyncio.open_connection(self.host, self.port),
@@ -451,7 +459,7 @@ class TeletaskClient:
     # ------------------------------------------------------------------
 
     async def set_state(self, function: int, number: int, param1: int, *data: int | None) -> None:
-        await self._send(self._build_set(function, number, param1, *data))
+        await self._send(self._build_set(function, number, param1, *data), strict=True)
 
     async def display_message(
         self,
@@ -467,7 +475,7 @@ class TeletaskClient:
         await self._send(self._build_display_message(
             buses, addresses, line1, line2,
             is_message=is_message, ascii_mode=ascii_mode, beeps=beeps,
-        ))
+        ), strict=True)
 
     async def subscribe_device(self, function: int, number: int) -> None:
         """DoIP per-device subscription (0x22); needed for badge access reports."""
@@ -590,8 +598,17 @@ class TeletaskClient:
             return f"{name} {self._fn_name(fn)}"
         return f"{name} {data.hex(' ')}"
 
-    async def _send(self, data: bytes) -> None:
+    async def _send(self, data: bytes, *, strict: bool = False) -> None:
+        """Write a frame to the central.
+
+        With ``strict`` (commands a user asked for) a frame that can't be sent
+        raises TeletaskNotConnectedError, so the caller can report it instead
+        of pretending it worked. Background traffic (subscriptions, state
+        requests, keep-alives) only logs.
+        """
         if not self._connected or self._writer is None:
+            if strict:
+                raise TeletaskNotConnectedError(self.last_error or "not connected")
             _LOGGER.warning("Cannot send: not connected")
             return
         _LOGGER.debug("TX %-10s  raw: %s", self._describe_tx(data), data.hex(" "))
@@ -600,7 +617,10 @@ class TeletaskClient:
             await self._writer.drain()
         except (OSError, ConnectionResetError) as exc:
             _LOGGER.error("Send failed: %s", exc)
+            self.last_error = f"send failed: {str(exc) or type(exc).__name__}"
             self._handle_disconnect()
+            if strict:
+                raise TeletaskNotConnectedError(str(exc) or type(exc).__name__) from exc
 
     # ------------------------------------------------------------------
     # Receiving
@@ -613,6 +633,7 @@ class TeletaskClient:
                 data = await asyncio.wait_for(self._reader.read(256), timeout=60)
                 if not data:
                     _LOGGER.warning("Teletask central closed the connection")
+                    self.last_error = "connection closed by the central unit"
                     break
                 _LOGGER.debug("RX raw (%d bytes): %s", len(data), data.hex(" "))
                 buffer.extend(data)
@@ -640,6 +661,7 @@ class TeletaskClient:
                 continue
             except (OSError, ConnectionResetError) as exc:
                 _LOGGER.error("Connection lost: %s", exc)
+                self.last_error = f"connection lost: {str(exc) or type(exc).__name__}"
                 break
             except asyncio.CancelledError:
                 return
@@ -650,8 +672,26 @@ class TeletaskClient:
         if not self._connected:
             return  # already handled
         self._connected = False
+        # Close the dead socket now; a half-open one would otherwise stay
+        # around until the next connect().
+        self._close_writer()
         if self._disconnect_callback:
             self._disconnect_callback()
+
+    def _stop_tasks(self) -> None:
+        current = asyncio.current_task()
+        for task in (self._keep_alive_task, self._receive_task):
+            if task and not task.done() and task is not current:
+                task.cancel()
+        self._keep_alive_task = self._receive_task = None
+
+    def _close_writer(self) -> None:
+        if self._writer is not None:
+            try:
+                self._writer.close()
+            except Exception:  # noqa: BLE001 — already broken, nothing to do
+                pass
+            self._writer = None
 
     def _parse_frame(self, buf: bytearray) -> tuple[TeletaskEvent | None, int]:
         if len(buf) < 2:

@@ -8,6 +8,7 @@ from homeassistant.components.media_player import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .client import (
@@ -112,7 +113,11 @@ class TeletaskAudioZone(TeletaskEntity, MediaPlayerEntity):
     async def async_select_source(self, source: str) -> None:
         number = next((n for n, name in self._sources.items() if name == source), None)
         if number is None:
-            raise ValueError(f"Unknown source {source!r}")
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="unknown_source",
+                translation_placeholders={"source": source, "sources": ", ".join(self.source_list or [])},
+            )
         await self._hub.async_audio_select_source(self._number, number)
 
     async def async_media_next_track(self) -> None:

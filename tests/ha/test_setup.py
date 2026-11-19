@@ -16,6 +16,7 @@ import pytest
 pytest.importorskip("pytest_homeassistant_custom_component")
 
 from homeassistant.core import HomeAssistant  # noqa: E402
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError  # noqa: E402
 from homeassistant.helpers import device_registry as dr  # noqa: E402
 from homeassistant.helpers import entity_registry as er  # noqa: E402
 from homeassistant.helpers.update_coordinator import UpdateFailed  # noqa: E402
@@ -27,6 +28,7 @@ CID = "test"
 CONFIG = {
     "componentsTypes": {
         "RELAY": [{"number": 1, "description": "Hall"}],
+        "DIMMER": [{"number": 9, "description": "Dining"}],
         "SENSOR": [
             {"number": 2, "description": "Living", "type": "TEMPERATURECONTROL", "fan": True},
             {"number": 3, "description": "Bathroom humidity", "type": "HUMIDITY"},
@@ -268,6 +270,92 @@ async def test_climate_commands(hass: HomeAssistant, central) -> None:
     assert [20, 0, 2, 25] in sets                  # preset night
     assert [20, 0, 2, 96] in sets                  # mode cool
     assert [20, 0, 2, 29, 122] in sets             # day preset (21 + 40) × 2
+
+
+async def test_lost_connection_makes_entities_unavailable(hass: HomeAssistant, central) -> None:
+    await _setup(hass, _entry(central.port))
+    switch_id = _entity_id(hass, "switch", f"teletask_{CID}_5_5")
+    assert hass.states.get(switch_id).state == "on"
+
+    for writer in central.writers:
+        writer.close()
+    await asyncio.sleep(0.2)
+    await hass.async_block_till_done()
+    assert hass.states.get(switch_id).state == "unavailable"
+
+
+async def test_command_on_dead_connection_raises(hass: HomeAssistant, central) -> None:
+    """A drop not noticed yet surfaces on the next command, not as a silent success."""
+    entry = _entry(central.port)
+    await _setup(hass, entry)
+    switch_id = _entity_id(hass, "switch", f"teletask_{CID}_5_5")
+    hub = hass.data[DOMAIN][entry.entry_id]
+    hub._client._writer.write = lambda data: (_ for _ in ()).throw(ConnectionResetError("reset by peer"))
+
+    with pytest.raises(HomeAssistantError) as err:
+        await hass.services.async_call(
+            "switch", "turn_off", {"entity_id": switch_id}, blocking=True,
+        )
+    assert err.value.translation_key == "not_connected"
+    assert "reset by peer" in str(err.value)
+    await hass.async_block_till_done()
+    assert hass.states.get(switch_id).state == "unavailable"  # not optimistically "off"
+
+
+async def test_diagnostics(hass: HomeAssistant, central) -> None:
+    from custom_components.teletask.diagnostics import async_get_config_entry_diagnostics
+
+    entry = _entry(central.port)
+    await _setup(hass, entry)
+    diag = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert diag["entry"]["data"]["host"] == "**REDACTED**"
+    assert "config_json" not in diag["entry"]["data"]
+    assert diag["connection"]["connected"] is True
+    assert diag["connection"]["repairs_issue_open"] is False
+    assert diag["central_web_page"]["reachable"] is False
+    assert diag["central_web_page"]["info"]["serial_number"] is None  # no web page here
+    assert diag["component_counts"]["SENSOR"] == 2
+    assert diag["states"]["TIMEDFNC 5"] == {"state": "ON"}
+    json.dumps(diag)  # must be serialisable for the download
+
+    for writer in central.writers:
+        writer.close()
+    await asyncio.sleep(0.2)
+    diag = await async_get_config_entry_diagnostics(hass, entry)
+    assert diag["connection"]["connected"] is False
+    assert diag["connection"]["last_error"] == "connection closed by the central unit"
+    assert diag["connection"]["outage_since"] is not None
+
+
+async def test_invalid_service_input_is_reported(hass: HomeAssistant, central) -> None:
+    await _setup(hass, _entry(central.port))
+    notify_id = _entity_id(hass, "notify", f"teletask_{CID}_54_1000")
+    with pytest.raises(ServiceValidationError) as err:
+        await hass.services.async_call(
+            DOMAIN, "send_display_message",
+            {"entity_id": notify_id, "message": "Hi", "line1": "Hi"}, blocking=True,
+        )
+    assert err.value.translation_key == "message_and_lines"
+
+    audio_id = _entity_id(hass, "media_player", f"teletask_{CID}_31_1")
+    with pytest.raises(ServiceValidationError) as err:
+        await hass.services.async_call(
+            "media_player", "select_source", {"entity_id": audio_id, "source": "Vinyl"}, blocking=True,
+        )
+    assert err.value.translation_key == "unknown_source"
+    assert "Radio, Spotify" in str(err.value)
+
+
+async def test_lowest_brightness_keeps_light_on(hass: HomeAssistant, central) -> None:
+    await _setup(hass, _entry(central.port))
+    dimmer_id = _entity_id(hass, "light", f"teletask_{CID}_2_9")
+    await hass.services.async_call(
+        "light", "turn_on", {"entity_id": dimmer_id, "brightness": 1}, blocking=True,
+    )
+    await asyncio.sleep(0.1)
+    assert list(central.frames(0x07)[-1][4:-1]) == [2, 0, 9, 1]  # 1 %, not 0 (= off)
+    assert hass.states.get(dimmer_id).state == "on"
 
 
 async def test_push_button_events(hass: HomeAssistant, central) -> None:

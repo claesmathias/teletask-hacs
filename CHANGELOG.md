@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.9.0] — 2026-11-19
+
+### Added
+- **Diagnostics download.** Settings → Devices & services → Teletask → ⋮ →
+  Download diagnostics gives one file for bug reports: connection and outage
+  state, the last error, the central's web page info, the component config
+  and the last known state of every component. The host, MAC address, serial
+  number and project owner are redacted.
+
+### Fixed
+- **Entities looked controllable while the central was offline.** Lights,
+  switches, scenes and other Teletask entities now show as unavailable while
+  the connection to the central unit is down, instead of keeping their last
+  state.
+- **Commands failed silently.** A command that can't reach the central (for
+  example because the connection just dropped) now shows an error in Home
+  Assistant instead of looking like it worked, and the UI no longer shows the
+  change.
+- **Reconnects leaked a socket and a keep-alive loop.** After a dropped
+  connection the old socket stayed open and its keep-alive loop could keep
+  running next to the new one. Both are now cleaned up.
+- **The lowest brightness switched lights off.** Brightness 1–2 (of 255) was
+  rounded to 0 %, which the central treats as off. It now sends 1 %. Applies
+  to dimmers and tunable white lights.
+- **Unclear errors for invalid input.** Sending a display message with both
+  `message` and `line1`/`line2`, or picking an unknown audio source, now gives
+  a readable message (the audio one lists the available sources).
+- **The Repairs entry and logs now say why the connection dropped** (closed by
+  the central, connection reset, send failed), not only why a reconnect failed.
+
 ## [1.8.1] — 2026-11-14
 
 ### Fixed

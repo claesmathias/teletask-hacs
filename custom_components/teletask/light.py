@@ -89,8 +89,7 @@ class TeletaskDimmerLight(TeletaskEntity, LightEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         if ATTR_BRIGHTNESS in kwargs:
-            # Convert HA 0-255 to Teletask 0-100
-            teletask_brightness = round(kwargs[ATTR_BRIGHTNESS] * 100 / 255)
+            teletask_brightness = _to_teletask(kwargs[ATTR_BRIGHTNESS])
         else:
             # 103 = restore previous brightness (PREVIOUS_STATE per Teletask protocol)
             teletask_brightness = 103
@@ -106,8 +105,10 @@ def _to_ha(level: int) -> int:
 
 
 def _to_teletask(brightness: int) -> int:
-    """HA 0-255 → Teletask 0-100."""
-    return min(100, max(0, round(brightness * 100 / 255)))
+    """HA 0-255 → Teletask 0-100. Any brightness above 0 stays on (at least 1 %)."""
+    if brightness <= 0:
+        return 0
+    return min(100, max(1, round(brightness * 100 / 255)))
 
 
 class TeletaskRgbLight(TeletaskEntity, LightEntity):

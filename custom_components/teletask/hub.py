@@ -10,6 +10,7 @@ from typing import Any
 import aiohttp
 
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -37,6 +38,7 @@ from .client import (
     FunctionCode,
     TeletaskClient,
     TeletaskEvent,
+    TeletaskNotConnectedError,
     celsius_to_preset_byte,
     celsius_to_short,
     decode_sensor,
@@ -44,7 +46,7 @@ from .client import (
     display_targets,
     wrap_display_text,
 )
-from .const import DOMAIN, SIGNAL_HUB_STATUS, SIGNAL_STATE_UPDATED
+from .const import DOMAIN, SIGNAL_HUB_CONNECTION, SIGNAL_HUB_STATUS, SIGNAL_STATE_UPDATED
 from .webinfo import SERIAL_PATH, TIME_PATH, CentralInfo, parse_serial_page, parse_time_page
 
 _LOGGER = logging.getLogger(__name__)
@@ -75,6 +77,8 @@ def _format_duration(delta: timedelta) -> str:
     if minutes:
         return f"{minutes}m {secs}s"
     return f"{secs}s"
+
+
 WEB_POLL_INTERVAL = timedelta(minutes=5)
 WEB_TIMEOUT = aiohttp.ClientTimeout(total=10)
 
@@ -113,6 +117,7 @@ class TeletaskHub:
         self.connected = False
         self.last_event: datetime | None = None
         self.status_signal = SIGNAL_HUB_STATUS.format(central_id=central_id)
+        self.connection_signal = SIGNAL_HUB_CONNECTION.format(central_id=central_id)
         # Device registry id of the central, set by async_setup_entry before the
         # platforms load; component devices link to it ("Connected via").
         self.central_device_id: str | None = None
@@ -319,6 +324,7 @@ class TeletaskHub:
         if connected != self.connected:
             self.connected = connected
             async_dispatcher_send(self.hass, self.status_signal)
+            async_dispatcher_send(self.hass, self.connection_signal)
 
     # ------------------------------------------------------------------
     # Outage tracking (Repairs entry)
@@ -427,6 +433,28 @@ class TeletaskHub:
     # Commands
     # ------------------------------------------------------------------
 
+    async def _send_command(self, send, *args, **kwargs) -> None:
+        """Send a user command; raise a readable error if the central is offline.
+
+        Raising before the optimistic update keeps the UI from showing a change
+        that never reached the central.
+        """
+        try:
+            await send(*args, **kwargs)
+        except TeletaskNotConnectedError as exc:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="not_connected",
+                translation_placeholders={
+                    "host": self.host,
+                    "port": str(self.port),
+                    "error": str(exc),
+                },
+            ) from exc
+
+    async def _set(self, function: int, number: int, param1: int, *data: int | None) -> None:
+        await self._send_command(self._client.set_state, function, number, param1, *data)
+
     def _optimistic_update(self, function: int, number: int, state: dict) -> None:
         """Update local state immediately after a SET command.
 
@@ -449,14 +477,14 @@ class TeletaskHub:
         async_dispatcher_send(self.hass, signal, state)
 
     async def async_set_relay(self, number: int, state: bool) -> None:
-        await self._client.set_state(FunctionCode.RELAY, number, 0xFF if state else 0x00)
+        await self._set(FunctionCode.RELAY, number, 0xFF if state else 0x00)
         self._optimistic_update(FunctionCode.RELAY, number, {"state": "ON" if state else "OFF"})
 
     async def async_set_dimmer(self, number: int, brightness: int, function: int = FunctionCode.DIMMER) -> None:
         # 103 = PREVIOUS_STATE (restore last brightness); all other values clamp to 0-100.
         if brightness != 103:
             brightness = max(0, min(100, brightness))
-        await self._client.set_state(function, number, brightness)
+        await self._set(function, number, brightness)
         # Optimistic update: if PREVIOUS_STATE (103) we don't know the actual brightness,
         # so just mark as ON without changing the brightness value.
         if brightness == 103:
@@ -472,28 +500,28 @@ class TeletaskHub:
     async def async_set_motor(self, number: int, direction: str, function: int = FunctionCode.MOTOR) -> None:
         # STOP=3 per Teletask protocol (SET_MTRSTOP=3, not 0)
         param = {"UP": 1, "DOWN": 2, "STOP": MOTOR_STOP}.get(direction.upper(), MOTOR_STOP)
-        await self._client.set_state(function, number, param)
+        await self._set(function, number, param)
 
     async def async_set_motor_position(self, number: int, position: int, function: int = FunctionCode.MOTOR) -> None:
         position = max(0, min(100, position))
         # MOTOR_GO_TO_POSITION=11 with position percentage as extra byte
-        await self._client.set_state(function, number, MOTOR_GO_TO_POSITION, position)
+        await self._set(function, number, MOTOR_GO_TO_POSITION, position)
 
     async def async_set_mood(self, function: int, number: int, state: bool) -> None:
-        await self._client.set_state(function, number, 0xFF if state else 0x00)
+        await self._set(function, number, 0xFF if state else 0x00)
         self._optimistic_update(function, number, {"state": "ON" if state else "OFF"})
 
     async def async_set_flag(self, number: int, state: bool) -> None:
-        await self._client.set_state(FunctionCode.FLAG, number, 0xFF if state else 0x00)
+        await self._set(FunctionCode.FLAG, number, 0xFF if state else 0x00)
         self._optimistic_update(FunctionCode.FLAG, number, {"state": "ON" if state else "OFF"})
 
     async def async_set_timedfnc(self, number: int, state: bool) -> None:
-        await self._client.set_state(FunctionCode.TIMEDFNC, number, 0xFF if state else 0x00)
+        await self._set(FunctionCode.TIMEDFNC, number, 0xFF if state else 0x00)
         self._optimistic_update(FunctionCode.TIMEDFNC, number, {"state": "ON" if state else "OFF"})
 
     async def async_set_onoff(self, function: int, number: int, state: bool) -> None:
         """ON/OFF for any single-byte function (process, service, alarm, ...)."""
-        await self._client.set_state(function, number, STATE_ON if state else STATE_OFF)
+        await self._set(function, number, STATE_ON if state else STATE_OFF)
         self._optimistic_update(function, number, {
             **self._component_states.get((function, number), {}),
             "state": "ON" if state else "OFF",
@@ -502,44 +530,44 @@ class TeletaskHub:
     # Motors -------------------------------------------------------------
 
     async def async_set_motor_tilt(self, function: int, number: int, position: int) -> None:
-        await self._client.set_state(function, number, MOTOR_SLAT_POSITION, max(0, min(100, position)))
+        await self._set(function, number, MOTOR_SLAT_POSITION, max(0, min(100, position)))
 
     async def async_set_motor_sun_protection(self, function: int, number: int, on: bool) -> None:
-        await self._client.set_state(function, number, MOTOR_SUN_PROTECTION, STATE_ON if on else STATE_OFF)
+        await self._set(function, number, MOTOR_SUN_PROTECTION, STATE_ON if on else STATE_OFF)
 
     # Climate (sensor zone) ----------------------------------------------
 
     async def async_climate_command(self, number: int, setting: int, *data: int) -> None:
-        await self._client.set_state(FunctionCode.SENSOR, number, setting, *data)
+        await self._set(FunctionCode.SENSOR, number, setting, *data)
 
     async def async_climate_set_target(self, number: int, celsius: float) -> None:
         value = celsius_to_short(celsius)
-        await self._client.set_state(
+        await self._set(
             FunctionCode.SENSOR, number, TEMP_MANUAL_TARGET, (value >> 8) & 0xFF, value & 0xFF
         )
         self.optimistic_merge(FunctionCode.SENSOR, number, {"target_temperature": celsius})
 
     async def async_climate_set_preset_temperature(self, number: int, setting: int, key: str, celsius: float) -> None:
-        await self._client.set_state(FunctionCode.SENSOR, number, setting, celsius_to_preset_byte(celsius))
+        await self._set(FunctionCode.SENSOR, number, setting, celsius_to_preset_byte(celsius))
         self.optimistic_merge(FunctionCode.SENSOR, number, {key: celsius})
 
     # Audio -----------------------------------------------------------------
 
     async def async_audio_command(self, number: int, setting: int) -> None:
-        await self._client.set_state(FunctionCode.AUDIO, number, setting)
+        await self._set(FunctionCode.AUDIO, number, setting)
 
     async def async_audio_select_source(self, number: int, source: int) -> None:
         setting = AUDIO_SOURCES.get(source)
         if setting is None:
             raise ValueError(f"Audio source must be 1-8, got {source}")
-        await self._client.set_state(FunctionCode.AUDIO, number, setting)
+        await self._set(FunctionCode.AUDIO, number, setting)
         self.optimistic_merge(FunctionCode.AUDIO, number, {"state": "ON", "source": source})
 
     # RGB / tunable white -----------------------------------------------
 
     async def async_set_rgb(self, function: int, number: int, rgb: tuple[int, int, int]) -> None:
         r, g, b = (max(0, min(255, int(c))) for c in rgb)
-        await self._client.set_state(function, number, RGB_COLOR, r, g, b)
+        await self._set(function, number, RGB_COLOR, r, g, b)
         self.optimistic_merge(function, number, {"state": "ON" if (r or g or b) else "OFF", "rgb": [r, g, b]})
 
     async def async_set_tw(
@@ -547,7 +575,7 @@ class TeletaskHub:
     ) -> None:
         k = TW_UNCHANGED_KELVIN if kelvin is None else max(0, min(0xFEFD, int(kelvin)))
         level = TW_UNCHANGED_BRIGHTNESS if brightness is None else max(0, min(100, int(brightness)))
-        await self._client.set_state(function, number, TW_COLOR, (k >> 8) & 0xFF, k & 0xFF, level)
+        await self._set(function, number, TW_COLOR, (k >> 8) & 0xFF, k & 0xFF, level)
         changes: dict[str, Any] = {}
         if kelvin is not None:
             changes["kelvin"] = k
@@ -603,7 +631,8 @@ class TeletaskHub:
         if not 0 <= beeps <= 255:
             _LOGGER.warning("Display message %s asks for %d beeps; the display can do 0 to 255", number, beeps)
         buses, addresses = display_targets(cfg)
-        await self._client.display_message(
+        await self._send_command(
+            self._client.display_message,
             buses, addresses, line1, line2,
             is_message=str(message_type).lower() == "message",
             ascii_mode=ascii_mode,
@@ -634,6 +663,19 @@ class TeletaskHub:
 
     def get_state(self, function: int, number: int) -> dict:
         return self._component_states.get((function, number), {})
+
+    @property
+    def components(self) -> dict[tuple[int, int], dict]:
+        return self._components
+
+    @property
+    def last_error(self) -> str | None:
+        """Why the last connect or command failed (None after a clean connect)."""
+        return self._client.last_error
+
+    @property
+    def reconnect_attempts(self) -> int:
+        return self._reconnect_attempts
 
     def get_components_by_function(self, function: int) -> list[dict]:
         return [c for (fn, _), c in self._components.items() if fn == function]

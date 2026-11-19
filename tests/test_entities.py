@@ -137,6 +137,17 @@ class _CoordinatorEntity(_Entity):
 
 _mod_update_coordinator.CoordinatorEntity = _CoordinatorEntity
 
+class _HomeAssistantError(Exception):
+    def __init__(self, *args, translation_domain=None, translation_key=None,
+                 translation_placeholders=None):
+        super().__init__(*args)
+        self.translation_domain = translation_domain
+        self.translation_key = translation_key
+        self.translation_placeholders = translation_placeholders
+
+_mod_exceptions = types.ModuleType("homeassistant.exceptions")
+_mod_exceptions.HomeAssistantError = _HomeAssistantError
+
 _mod_aiohttp = types.ModuleType("aiohttp")
 _mod_aiohttp.ClientTimeout = MagicMock()
 _mod_aiohttp.ClientError = type("ClientError", (Exception,), {})
@@ -163,6 +174,7 @@ _HA_MOCKS = {
     "homeassistant.helpers.event":           _mod_event,
     "homeassistant.helpers.issue_registry":  _mod_issue_registry,
     "homeassistant.config_entries":          _mod_config_entries,
+    "homeassistant.exceptions":              _mod_exceptions,
 }
 for _name, _mod in _HA_MOCKS.items():
     sys.modules.setdefault(_name, _mod)
@@ -354,7 +366,7 @@ class TestTeletaskSceneAddedToHass:
     def test_registers_dispatcher_subscription(self):
         entity, hub = _make_scene()
         self._run(entity.async_added_to_hass())
-        entity.async_on_remove.assert_called_once()
+        assert entity.async_on_remove.call_count == 2  # state + connection
 
     def test_signal_format(self):
         """The dispatcher signal must encode central_id, function, and number."""
@@ -512,7 +524,7 @@ class TestTeletaskButtonAddedToHass:
     def test_registers_dispatcher_subscription(self):
         entity, _ = _make_button()
         self._run(entity.async_added_to_hass())
-        entity.async_on_remove.assert_called_once()
+        assert entity.async_on_remove.call_count == 2  # state + connection
 
     def test_signal_format(self):
         entity, hub = _make_button(number=16)
@@ -577,10 +589,11 @@ class TestHubStatus:
         hub._set_connected(True)
         hub._set_connected(True)          # no change → no second signal
         assert hub.connected is True
-        assert _mod_dispatcher.async_dispatcher_send.call_count == 1
+        signals = [c.args[1] for c in _mod_dispatcher.async_dispatcher_send.call_args_list]
+        assert signals == [hub.status_signal, hub.connection_signal]
         hub._set_connected(False)
         assert hub.connected is False
-        assert _mod_dispatcher.async_dispatcher_send.call_count == 2
+        assert _mod_dispatcher.async_dispatcher_send.call_count == 4
 
     def test_disconnect_callback_marks_disconnected(self):
         hub = _make_real_hub()
@@ -589,6 +602,12 @@ class TestHubStatus:
         hub._on_disconnect()
         assert hub.connected is False
         hub._schedule_reconnect.assert_called_once()
+
+    def test_event_does_not_signal_connection(self):
+        hub = _make_real_hub()
+        hub._on_event(_client_mod.TeletaskEvent(function=1, number=22, state={"state": "ON"}))
+        signals = [c.args[1] for c in _mod_dispatcher.async_dispatcher_send.call_args_list]
+        assert hub.connection_signal not in signals
 
     def test_event_records_time_and_signals_status(self):
         hub = _make_real_hub()
@@ -849,3 +868,74 @@ class TestCentralLink:
         relay = {"function": 1, "number": 1, "description": "Garage", "function_name": "RELAY", "config": {}}
         entity = _entity_mod.TeletaskEntity(hub, relay)
         assert entity._attr_device_info["via_device_id"] == "central-device-id"
+
+
+# ---------------------------------------------------------------------------
+# Disconnected central: commands raise, entities go unavailable
+# ---------------------------------------------------------------------------
+
+class TestDisconnected:
+    async def test_strict_command_raises_when_not_connected(self):
+        client = _client_mod.TeletaskClient("127.0.0.1", 1, lambda e: None)
+        with pytest.raises(_client_mod.TeletaskNotConnectedError):
+            await client.set_state(FunctionCode.RELAY, 1, 0xFF)
+
+    async def test_background_request_does_not_raise(self):
+        client = _client_mod.TeletaskClient("127.0.0.1", 1, lambda e: None)
+        await client.get_state(FunctionCode.RELAY, 1)
+
+    async def test_write_failure_raises_and_marks_disconnected(self):
+        lost = MagicMock()
+        client = _client_mod.TeletaskClient("127.0.0.1", 1, lambda e: None, lost)
+        client._connected = True
+        client._writer = MagicMock()
+        client._writer.drain = AsyncMock(side_effect=ConnectionResetError("reset by peer"))
+        with pytest.raises(_client_mod.TeletaskNotConnectedError, match="reset by peer"):
+            await client.set_state(FunctionCode.RELAY, 1, 0xFF)
+        assert client.connected is False
+        lost.assert_called_once()
+
+    async def test_hub_raises_translated_error_and_skips_optimistic_update(self):
+        hub = _make_real_hub()
+        _mod_dispatcher.async_dispatcher_send.reset_mock()
+        with pytest.raises(_HomeAssistantError) as err:
+            await hub.async_set_relay(1, True)
+        assert err.value.translation_key == "not_connected"
+        assert err.value.translation_placeholders["host"] == "192.168.11.73"
+        assert hub.get_state(FunctionCode.RELAY, 1) == {}
+        _mod_dispatcher.async_dispatcher_send.assert_not_called()
+
+    def test_entity_availability_follows_hub(self):
+        hub = _make_real_hub()
+        entity, _ = _make_button()
+        entity._hub = hub
+        assert entity.available is False
+        hub._set_connected(True)
+        assert entity.available is True
+
+    def test_scene_availability_follows_hub(self):
+        hub = _make_real_hub()
+        scene, _ = _make_scene()
+        scene._hub = hub
+        assert scene.available is False
+        hub._set_connected(True)
+        assert scene.available is True
+
+
+class TestReconnectCleanup:
+    def test_disconnect_closes_socket(self):
+        client = _client_mod.TeletaskClient("127.0.0.1", 1, lambda e: None, MagicMock())
+        writer = MagicMock()
+        client._connected, client._writer = True, writer
+        client._handle_disconnect()
+        writer.close.assert_called_once()
+        assert client._writer is None
+
+    async def test_connect_stops_old_keep_alive(self):
+        client = _client_mod.TeletaskClient("127.0.0.1", 1, lambda e: None)
+        old = asyncio.ensure_future(asyncio.sleep(60))
+        client._keep_alive_task = old
+        await client.connect()  # port 1: refused
+        await asyncio.sleep(0)
+        assert old.cancelled()
+        assert client.last_error

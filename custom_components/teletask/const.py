@@ -15,6 +15,8 @@ DEFAULT_PORT = 55957
 SIGNAL_STATE_UPDATED = "teletask_{central_id}_{function}_{number}_state"
 # Sent when the hub's connection state changes or the central reports an event.
 SIGNAL_HUB_STATUS = "teletask_{central_id}_hub_status"
+# Fired only when the TCP connection goes up or down (not on every event).
+SIGNAL_HUB_CONNECTION = "teletask_{central_id}_hub_connection"
 
 # HA bus event fired when the TeleTask central reports a state change
 # for entity types that have no writable HA state (scenes, momentary buttons).

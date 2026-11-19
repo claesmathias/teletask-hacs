@@ -28,7 +28,32 @@ def central_link(hub: TeletaskHub) -> dict:
     return {"via_device": (DOMAIN, hub.central_id)}
 
 
-class TeletaskEntity(Entity):
+class FollowsConnection:
+    """Mixin: the entity is unavailable while the central is disconnected.
+
+    Without this, entities keep showing their last state during an outage and
+    look controllable when they aren't.
+    """
+
+    _hub: TeletaskHub
+
+    @property
+    def available(self) -> bool:
+        return self._hub.connected
+
+    def _follow_connection(self) -> None:
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass, self._hub.connection_signal, self._handle_connection_change
+            )
+        )
+
+    @callback
+    def _handle_connection_change(self) -> None:
+        self.async_write_ha_state()
+
+
+class TeletaskEntity(FollowsConnection, Entity):
     """Shared base for all Teletask entities."""
 
     _attr_should_poll = False
@@ -60,6 +85,7 @@ class TeletaskEntity(Entity):
         self._attr_device_info = device_info
 
     async def async_added_to_hass(self) -> None:
+        self._follow_connection()
         signal = SIGNAL_STATE_UPDATED.format(
             central_id=self._hub.central_id,
             function=self._function,

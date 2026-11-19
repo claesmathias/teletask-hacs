@@ -104,6 +104,20 @@
       "cannot_write_file": "Could not save the file: {error}"
     }
   },
+  "exceptions": {
+    "message_and_lines": {
+      "message": "Give either a message or line 1/line 2, not both."
+    },
+    "no_text": {
+      "message": "Give a message or a line 1/line 2 to show."
+    },
+    "unknown_source": {
+      "message": "Unknown audio source \"{source}\". Available sources: {sources}."
+    },
+    "not_connected": {
+      "message": "Not sent: the Teletask central unit at {host}:{port} is not connected ({error}). The integration retries every 30 seconds; see Settings > Repairs if it stays offline."
+    }
+  },
   "issues": {
     "central_unreachable": {
       "title": "Teletask central unit unreachable",

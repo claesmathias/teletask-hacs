@@ -636,6 +636,11 @@ look fine while control is down, and the reverse.
 ### When the connection is lost
 
 - The integration retries every **30 seconds**, indefinitely.
+- All Teletask entities show as **unavailable** until the connection is back.
+  The central's `Connection` and `Last event` entities stay available.
+- A command that can't reach the central (for example right after a drop that
+  isn't noticed yet) shows an **error** in Home Assistant instead of looking
+  like it worked.
 - After **5 minutes** without a connection, a **Repairs** entry appears
   (**Settings → System → Repairs**: *Teletask central unit unreachable*). It
   shows since when, the host and port, and the last error. It **clears itself**
@@ -661,6 +666,15 @@ automation:
           title: Teletask
           message: Lost connection to the central unit for 5 minutes.
 ```
+
+### Reporting a problem
+
+Download the diagnostics from **Settings → Devices & services → Teletask → ⋮ →
+Download diagnostics** and attach the file to your issue. It contains the
+connection and outage state, the last error, what the central's web page
+reports, your component config and the last known state of every component.
+The host, MAC address, serial number and project owner are left out. With
+**debug logging** on (Configure → Settings), add the log as well.
 
 The central prints its time without a usable timezone, so it is read in Home
 Assistant's configured timezone. If the web page can't be reached, setup still

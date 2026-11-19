@@ -12,6 +12,7 @@ import voluptuous as vol
 from homeassistant.components.notify import NotifyEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -72,9 +73,11 @@ class TeletaskDisplay(TeletaskEntity, NotifyEntity):
         ascii: bool | None = None,  # noqa: A002 — service field name
     ) -> None:
         if message is not None and (line1 is not None or line2 is not None):
-            raise vol.Invalid("Use either 'message' or 'line1'/'line2', not both")
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="message_and_lines"
+            )
         if message is None and line1 is None and line2 is None:
-            raise vol.Invalid("Give a 'message' or 'line1'/'line2'")
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="no_text")
         await self._hub.async_display_message(
             self._number,
             message=message,

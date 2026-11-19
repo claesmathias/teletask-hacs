@@ -14,7 +14,7 @@ import homeassistant.util.dt as dt_util
 
 from .client import FunctionCode
 from .const import DOMAIN, SIGNAL_STATE_UPDATED, TELETASK_EVENT
-from .entity import central_link
+from .entity import FollowsConnection, central_link
 from .hub import TeletaskHub
 
 _LOGGER = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class TeletaskScene(Scene):
+class TeletaskScene(FollowsConnection, Scene):
     """A Teletask mood or timed function exposed as a scene (activate only)."""
 
     def __init__(self, hub: TeletaskHub, component: dict) -> None:
@@ -86,6 +86,7 @@ class TeletaskScene(Scene):
         # see a finite date from the first state machine update.
         self.async_write_ha_state()
         await super().async_added_to_hass()
+        self._follow_connection()
         signal = SIGNAL_STATE_UPDATED.format(
             central_id=self._hub.central_id,
             function=self._function,
